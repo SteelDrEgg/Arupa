@@ -460,8 +460,7 @@
         </div>
     </div>
 
-    <!-- Socket.IO Client -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/assets/js/session.js"></script>
     
     <script>
         // Global variables
@@ -471,17 +470,28 @@
         let isConnected = false;
 
         // Initialize dashboard
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', async function() {
             updateTimeOfDay();
+            try {
+                const username = await Session.getCurrentUsername();
+                setUsername(username);
+            } catch (error) {
+                console.warn('Failed to load username from session API:', error);
+            }
             initializeSocketConnection();
         });
 
-        // Initialize Socket.IO connection
-        function initializeSocketConnection() {
+        async function initializeSocketConnection() {
             console.log('Initializing Socket.IO connection...');
-            
-            // Connect to dashboard namespace
-            socket = io('/dashboard');
+            try {
+                // Connect to dashboard namespace through Session helper
+                socket = await Session.createSocket('/dashboard');
+            } catch (error) {
+                console.error('Failed to initialize Socket.IO:', error);
+                updateHeartbeat(false);
+                showError('Failed to initialize dashboard socket');
+                return;
+            }
 
             // Connection events
             socket.on('connect', function() {

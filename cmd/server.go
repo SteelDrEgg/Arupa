@@ -25,6 +25,7 @@ func main() {
 	web.StartAssets(http.DefaultServeMux)
 	web.StartIndex(http.DefaultServeMux)
 	web.StartLogin(http.DefaultServeMux)
+	web.StartSessionUtil(http.DefaultServeMux)
 
 	http.ListenAndServe(":8080", nil)
 }
