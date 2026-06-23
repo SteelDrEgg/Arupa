@@ -83,6 +83,7 @@ func Read() Config {
 		Auth: Auth{
 			Users: make(map[string]string),
 		},
+		Web: Conf.Web,
 	}
 
 	// Copy the users map
