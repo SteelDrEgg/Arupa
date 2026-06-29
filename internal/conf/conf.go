@@ -3,6 +3,7 @@ package conf
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
@@ -140,4 +141,33 @@ func GetWeb() Web {
 	mu.RLock()
 	defer mu.RUnlock()
 	return Conf.Web
+}
+
+// GetPlugin returns the Plugin config in a thread-safe manner.
+func GetPlugin() Plugin {
+	mu.RLock()
+	defer mu.RUnlock()
+	return Conf.Plugin
+}
+
+// SetPluginPaths updates plugin package and temp directories and persists them.
+func SetPluginPaths(pluginDir, pluginTempDir string) (Config, error) {
+	pluginDir = strings.TrimSpace(pluginDir)
+	pluginTempDir = strings.TrimSpace(pluginTempDir)
+
+	if pluginDir == "" {
+		return Config{}, fmt.Errorf("plugin directory cannot be empty")
+	}
+	if pluginTempDir == "" {
+		return Config{}, fmt.Errorf("plugin temp directory cannot be empty")
+	}
+
+	next := Read()
+	next.Plugin.PluginDir = pluginDir
+	next.Plugin.PluginTempDir = pluginTempDir
+
+	if err := Write(next); err != nil {
+		return Config{}, err
+	}
+	return next, nil
 }
