@@ -56,8 +56,8 @@ web-assets: web-assets-wasm
 	mkdir -p $(DIST_DIR)/web_assets_pkg/Content/assets $(PLUGIN_DIR)
 	cp $(DIST_DIR)/web_assets.wasm $(DIST_DIR)/web_assets_pkg/Content/web_assets.wasm
 	cp coreplugins/webassets/info.yaml $(DIST_DIR)/web_assets_pkg/info.yaml
-	cp -R web/assets/css $(DIST_DIR)/web_assets_pkg/Content/assets/css
-	cp -R web/assets/icon $(DIST_DIR)/web_assets_pkg/Content/assets/icon
+	cp -R coreplugins/webassets/assets/css $(DIST_DIR)/web_assets_pkg/Content/assets/css
+	cp -R coreplugins/webassets/assets/icon $(DIST_DIR)/web_assets_pkg/Content/assets/icon
 	cd $(DIST_DIR)/web_assets_pkg && zip -qr ../../$(PLUGIN_DIR)/web-assets.plg .
 	rm -rf $(DIST_DIR)/web_assets_pkg
 
