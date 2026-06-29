@@ -22,14 +22,12 @@ func (loginPlugin) Register(_ context.Context, _ *panel.RegisterRequest) (*panel
 		Version: "0.1.0",
 		StaticMounts: []*panel.StaticMount{
 			{
-				Prefix: "/pages/login.html",
-				//Directory: "$PLUGIN_ROOT/pages/login.html",
-				Directory: "web/pages/login.html",
+				Prefix:    "/pages/login.html",
+				Directory: "$PLUGIN_ROOT/pages/login.html",
 			},
 			{
-				Prefix: "/pages/logout.html",
-				//Directory: "$PLUGIN_ROOT/pages/logout.html",
-				Directory: "web/pages/logout.html",
+				Prefix:    "/pages/logout.html",
+				Directory: "$PLUGIN_ROOT/pages/logout.html",
 			},
 		},
 	}, nil

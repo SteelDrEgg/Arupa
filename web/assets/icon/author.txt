@@ -1,3 +1,0 @@
-Myna UI Icons
-MIT License
-https://github.com/praveenjuge/mynaui-icons
