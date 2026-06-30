@@ -4,7 +4,7 @@ PROTOC_GEN_GO_PLUGIN := $(GOBIN)/protoc-gen-go-plugin
 PLUGIN_DIR := plugins
 DIST_DIR := dist
 
-.PHONY: tools proto proto-grpc proto-wasm build run hello hello-wasm web-assets web-assets-wasm login login-wasm plugin-manager plugin-manager-wasm clean
+.PHONY: tools proto proto-grpc proto-wasm build run hello hello-wasm web-assets web-assets-wasm login login-wasm plugin-manager plugin-manager-wasm ssh ssh-grpc clean
 
 ## tools: install the protobuf generators used by `make proto`
 tools:
@@ -94,6 +94,21 @@ plugin-manager-wasm:
 	mkdir -p $(DIST_DIR)
 	GOOS=wasip1 GOARCH=wasm go build -o $(DIST_DIR)/plugin_manager.wasm -buildmode=c-shared ./coreplugins/pluginmanager
 
+## ssh: build and package SSH terminal gRPC plugin into plugins/ssh.plg
+ssh: ssh-grpc
+	rm -rf $(DIST_DIR)/ssh_pkg
+	mkdir -p $(DIST_DIR)/ssh_pkg/Content/pages $(DIST_DIR)/ssh_pkg/Content/assets/terminal $(PLUGIN_DIR)
+	cp $(DIST_DIR)/ssh-plugin $(DIST_DIR)/ssh_pkg/Content/ssh-plugin
+	cp coreplugins/ssh/info.yaml $(DIST_DIR)/ssh_pkg/info.yaml
+	cp coreplugins/ssh/pages/terminal.html $(DIST_DIR)/ssh_pkg/Content/pages/terminal.html
+	cp -R coreplugins/ssh/assets/terminal/. $(DIST_DIR)/ssh_pkg/Content/assets/terminal
+	cd $(DIST_DIR)/ssh_pkg && zip -qr ../../$(PLUGIN_DIR)/ssh.plg .
+	rm -rf $(DIST_DIR)/ssh_pkg
+
+ssh-grpc:
+	mkdir -p $(DIST_DIR)
+	go build -o $(DIST_DIR)/ssh-plugin ./coreplugins/ssh
+
 ## clean: remove build artifacts
 clean:
-	rm -rf $(DIST_DIR) $(PLUGIN_DIR)/hello.plg $(PLUGIN_DIR)/web-assets.plg $(PLUGIN_DIR)/login.plg $(PLUGIN_DIR)/plugin-manager.plg tmp
+	rm -rf $(DIST_DIR) $(PLUGIN_DIR)/hello.plg $(PLUGIN_DIR)/web-assets.plg $(PLUGIN_DIR)/login.plg $(PLUGIN_DIR)/plugin-manager.plg $(PLUGIN_DIR)/ssh.plg tmp
