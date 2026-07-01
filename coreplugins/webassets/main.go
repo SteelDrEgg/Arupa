@@ -55,6 +55,10 @@ func (webAssetsPlugin) Register(ctx context.Context, _ *panel.RegisterRequest) (
 				Prefix:    "/assets/icon/",
 				Directory: "$PLUGIN_ROOT/assets/icon",
 			},
+			//{
+			//	Prefix:    "/pages/login.html",
+			//	Directory: "$PLUGIN_ROOT/assets/icon/terminal.svg",
+			//},
 		},
 	}, nil
 }

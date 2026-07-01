@@ -36,7 +36,6 @@ type pluginView struct {
 	Config          conf.Plugin         `json:"config"`
 	Metadata        map[string]any      `json:"metadata,omitempty"`
 	Status          plugin.PluginStatus `json:"status"`
-	Loaded          bool                `json:"loaded"`
 }
 
 // StartPlugin registers plugin management endpoints used by frontend pages.
@@ -81,7 +80,6 @@ func handlePluginList(w http.ResponseWriter, r *http.Request, pm *plugin.Manager
 			Config:          entry.Config,
 			Metadata:        entry.Metadata,
 			Status:          entry.Status,
-			Loaded:          entry.Status == plugin.PluginStatusRunning || entry.Status == plugin.PluginStatusDegraded,
 		})
 	}
 

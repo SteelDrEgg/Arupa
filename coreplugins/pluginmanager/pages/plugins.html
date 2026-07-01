@@ -338,16 +338,31 @@
             border: 1px solid var(--color-base-300);
         }
 
+        .badge.status-running,
         .badge.running {
             background: color-mix(in oklab, var(--color-success) 20%, var(--color-base-100));
             border-color: color-mix(in oklab, var(--color-success) 44%, var(--color-base-300));
             color: var(--color-success-content);
         }
 
-        .badge.stopped {
+        .badge.status-degraded,
+        .badge.status-discovered {
             background: color-mix(in oklab, var(--color-warning) 18%, var(--color-base-100));
             border-color: color-mix(in oklab, var(--color-warning) 42%, var(--color-base-300));
             color: var(--color-warning-content);
+        }
+
+        .badge.status-starting,
+        .badge.status-stopping {
+            background: color-mix(in oklab, var(--color-info) 18%, var(--color-base-100));
+            border-color: color-mix(in oklab, var(--color-info) 42%, var(--color-base-300));
+            color: var(--color-info-content);
+        }
+
+        .badge.status-failed {
+            background: color-mix(in oklab, var(--color-error) 16%, var(--color-base-100));
+            border-color: color-mix(in oklab, var(--color-error) 40%, var(--color-base-300));
+            color: var(--color-error-content);
         }
 
         .mono {
@@ -548,12 +563,16 @@
                 <div class="stat-value" id="runningCount">0</div>
             </div>
             <div class="stat">
-                <div class="stat-label">Stopped</div>
-                <div class="stat-value" id="stoppedCount">0</div>
+                <div class="stat-label">Degraded</div>
+                <div class="stat-value" id="degradedCount">0</div>
             </div>
             <div class="stat">
-                <div class="stat-label">WASM</div>
-                <div class="stat-value" id="wasmCount">0</div>
+                <div class="stat-label">Inactive</div>
+                <div class="stat-value" id="inactiveCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Failed</div>
+                <div class="stat-value" id="failedCount">0</div>
             </div>
         </section>
 
@@ -566,7 +585,10 @@
                         <select class="select" id="statusFilter" aria-label="Status filter">
                             <option value="all">All</option>
                             <option value="running">Running</option>
-                            <option value="stopped">Stopped</option>
+                            <option value="degraded">Degraded</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="busy">Busy</option>
+                            <option value="failed">Failed</option>
                         </select>
                     </div>
                 </div>
@@ -619,8 +641,9 @@
             pathSummary: document.getElementById("pathSummary"),
             discoveredCount: document.getElementById("discoveredCount"),
             runningCount: document.getElementById("runningCount"),
-            stoppedCount: document.getElementById("stoppedCount"),
-            wasmCount: document.getElementById("wasmCount"),
+            degradedCount: document.getElementById("degradedCount"),
+            inactiveCount: document.getElementById("inactiveCount"),
+            failedCount: document.getElementById("failedCount"),
             reloadBtn: document.getElementById("reloadBtn"),
             scanBtn: document.getElementById("scanBtn"),
             pluginContent: document.getElementById("pluginContent"),
@@ -666,9 +689,9 @@
             els.scanBtn.disabled = value;
             els.saveConfigBtn.disabled = value;
             document.querySelectorAll("[data-plugin-action]").forEach((button) => {
-                const loaded = button.dataset.loaded === "true";
+                const status = normalizeStatus(button.dataset.pluginStatus);
                 const action = button.dataset.pluginAction;
-                button.disabled = value || (action === "start" && loaded) || ((action === "stop" || action === "restart") && !loaded);
+                button.disabled = value || !canRunAction(action, status);
             });
         }
 
@@ -690,20 +713,64 @@
             return plugin.name;
         }
 
-        function runningByName() {
-            const map = new Map();
-            state.running.forEach((item) => {
-                if (item && item.instance_id) map.set(item.instance_id, item);
-            });
-            return map;
+        function normalizeStatus(status) {
+            const value = String(status || "").trim().toLowerCase();
+            return value || "discovered";
+        }
+
+        function isRunningStatus(status) {
+            return status === "running";
+        }
+
+        function isDegradedStatus(status) {
+            return status === "degraded";
+        }
+
+        function isActiveStatus(status) {
+            return isRunningStatus(status) || isDegradedStatus(status);
+        }
+
+        function isBusyStatus(status) {
+            return status === "starting" || status === "stopping";
+        }
+
+        function isInactiveStatus(status) {
+            return status === "discovered";
+        }
+
+        function canRunAction(action, status) {
+            if (isBusyStatus(status)) return false;
+            if (action === "start") return status === "discovered" || status === "failed";
+            if (action === "stop" || action === "restart") return isActiveStatus(status);
+            return false;
+        }
+
+        function statusLabel(status) {
+            const labels = {
+                discovered: "Inactive",
+                starting: "Starting",
+                running: "Running",
+                degraded: "Degraded",
+                stopping: "Stopping",
+                failed: "Failed"
+            };
+            return labels[status] || status.charAt(0).toUpperCase() + status.slice(1);
+        }
+
+        function statusClass(status) {
+            return "status-" + status.replace(/[^a-z0-9-]/g, "-");
         }
 
         function filteredPlugins() {
             const query = els.searchInput.value.trim().toLowerCase();
-            const status = els.statusFilter.value;
+            const filter = els.statusFilter.value;
             return state.discovered.filter((plugin) => {
-                if (status === "running" && !plugin.loaded) return false;
-                if (status === "stopped" && plugin.loaded) return false;
+                const status = normalizeStatus(plugin.status);
+                if (filter === "running" && !isRunningStatus(status)) return false;
+                if (filter === "degraded" && !isDegradedStatus(status)) return false;
+                if (filter === "inactive" && !isInactiveStatus(status)) return false;
+                if (filter === "busy" && !isBusyStatus(status)) return false;
+                if (filter === "failed" && status !== "failed") return false;
                 if (!query) return true;
                 const haystack = [
                     plugin.name,
@@ -718,12 +785,15 @@
         }
 
         function renderStats() {
-            const running = state.discovered.filter((plugin) => plugin.loaded).length;
-            const wasm = state.discovered.filter((plugin) => plugin.type === "wasm").length;
+            const running = state.discovered.filter((plugin) => isRunningStatus(normalizeStatus(plugin.status))).length;
+            const degraded = state.discovered.filter((plugin) => isDegradedStatus(normalizeStatus(plugin.status))).length;
+            const inactive = state.discovered.filter((plugin) => isInactiveStatus(normalizeStatus(plugin.status))).length;
+            const failed = state.discovered.filter((plugin) => normalizeStatus(plugin.status) === "failed").length;
             els.discoveredCount.textContent = state.discovered.length;
             els.runningCount.textContent = running;
-            els.stoppedCount.textContent = Math.max(0, state.discovered.length - running);
-            els.wasmCount.textContent = wasm;
+            els.degradedCount.textContent = degraded;
+            els.inactiveCount.textContent = inactive;
+            els.failedCount.textContent = failed;
             els.pathSummary.textContent = state.pluginDir ? state.pluginDir : "No plugin directory configured";
         }
 
@@ -739,7 +809,11 @@
                 const meta = entries.length
                     ? entries.map(([key, value]) => `<span class="badge">${escapeHTML(key)}: ${escapeHTML(value)}</span>`).join("")
                     : '<span class="badge">No metadata</span>';
-                const loaded = Boolean(plugin.loaded);
+                const status = normalizeStatus(plugin.status);
+                const statusText = statusLabel(status);
+                const startDisabled = canRunAction("start", status) ? "" : "disabled";
+                const restartDisabled = canRunAction("restart", status) ? "" : "disabled";
+                const stopDisabled = canRunAction("stop", status) ? "" : "disabled";
                 return `
                     <tr>
                         <td>
@@ -751,21 +825,21 @@
                                 </div>
                             </div>
                         </td>
-                        <td><span class="badge ${loaded ? "running" : "stopped"}">${loaded ? "Running" : "Stopped"}</span></td>
+                        <td><span class="badge ${statusClass(status)}">${escapeHTML(statusText)}</span></td>
                         <td><span class="badge">${escapeHTML(plugin.type || "-")}</span></td>
                         <td class="mono" title="${escapeHTML(plugin.package_path)}">${escapeHTML(plugin.package_path || "-")}</td>
                         <td><div class="metadata">${meta}</div></td>
                         <td>
                             <div class="action-cell">
-                                <button class="btn" type="button" data-plugin-action="start" data-plugin-name="${escapeHTML(plugin.name)}" data-loaded="${loaded ? "true" : "false"}" ${loaded ? "disabled" : ""} title="Start">
+                                <button class="btn" type="button" data-plugin-action="start" data-plugin-name="${escapeHTML(plugin.name)}" data-plugin-status="${escapeHTML(status)}" ${startDisabled} title="Start">
                                     <span class="icon puzzle" aria-hidden="true"></span>
                                     Start
                                 </button>
-                                <button class="btn" type="button" data-plugin-action="restart" data-plugin-name="${escapeHTML(plugin.name)}" data-loaded="${loaded ? "true" : "false"}" ${loaded ? "" : "disabled"} title="Restart">
+                                <button class="btn" type="button" data-plugin-action="restart" data-plugin-name="${escapeHTML(plugin.name)}" data-plugin-status="${escapeHTML(status)}" ${restartDisabled} title="Restart">
                                     <span class="icon refresh" aria-hidden="true"></span>
                                     Restart
                                 </button>
-                                <button class="btn" type="button" data-plugin-action="stop" data-plugin-name="${escapeHTML(plugin.name)}" data-loaded="${loaded ? "true" : "false"}" ${loaded ? "" : "disabled"} title="Stop">
+                                <button class="btn" type="button" data-plugin-action="stop" data-plugin-name="${escapeHTML(plugin.name)}" data-plugin-status="${escapeHTML(status)}" ${stopDisabled} title="Stop">
                                     Stop
                                 </button>
                             </div>
@@ -827,12 +901,8 @@
         async function loadState(showOk) {
             const payload = await api("/api/plugins");
             const data = payload.data || {};
-            const runMap = new Map();
-            (data.running || []).forEach((item) => {
-                if (item && item.instance_id) runMap.set(item.instance_id, item);
-            });
             state.discovered = (data.discovered || []).map((plugin) => {
-                return Object.assign({}, plugin, { loaded: Boolean(plugin.loaded || runMap.has(plugin.name)) });
+                return Object.assign({}, plugin, { status: normalizeStatus(plugin.status) });
             });
             state.running = data.running || [];
             state.pluginDir = data.plugin_dir || "";
