@@ -54,6 +54,7 @@ func main() {
 			"name", entry.Name,
 			"version", entry.Version,
 			"type", entry.Type,
+			"status", entry.Status,
 			"auto_start", entry.Config.AutoStart(),
 			"package", entry.PackagePath,
 		}
