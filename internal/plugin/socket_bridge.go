@@ -21,13 +21,16 @@ type socketBridge struct {
 	log    *slog.Logger
 
 	mu         sync.RWMutex
-	owners     map[string]socketOwner // namespace -> owning plugin
-	registered map[string]struct{}    // namespace -> connection handler installed
+	owners     map[string]socketOwner // namespace -> current plugin binding
+	registered map[string]struct{}    // namespace -> dynamic handlers installed
 }
 
 type socketOwner struct {
-	pluginName string
-	conn       pluginConn
+	pluginName      string
+	conn            pluginConn
+	decl            SocketNamespaceDecl
+	events          map[string]struct{}
+	protectedEvents map[string]struct{}
 }
 
 func newSocketBridge(server *netx.Socket, log *slog.Logger) *socketBridge {
@@ -44,13 +47,22 @@ func newSocketBridge(server *netx.Socket, log *slog.Logger) *socketBridge {
 
 // register attaches a plugin's namespace and its event handlers.
 //
-// Socket.IO namespaces cannot be cheaply removed from the underlying server, so
-// the connection handler is installed once per namespace and each event lookup
-// resolves the current owner from b.owners. Stop clears that owner; Restart
-// replaces it.
+// Socket.IO namespaces are kept as stable shells. The namespace middleware and
+// connection handler are installed once; each connection and event dispatch
+// resolves the current owner and event declaration from b.owners. Stop clears
+// the owner and disconnects sockets from that namespace; Restart replaces it.
 func (b *socketBridge) register(pluginName string, decl SocketNamespaceDecl, conn pluginConn) error {
 	if decl.Name == "" {
 		return fmt.Errorf("socket namespace name is required")
+	}
+	if conn == nil {
+		return fmt.Errorf("socket namespace %q requires a plugin connection", decl.Name)
+	}
+
+	b.server.AddNamespace(decl.Name)
+	ns := b.server.GetNamespace(decl.Name)
+	if ns.Raw() == nil {
+		return fmt.Errorf("failed to create socket namespace %q", decl.Name)
 	}
 
 	b.mu.Lock()
@@ -59,60 +71,91 @@ func (b *socketBridge) register(pluginName string, decl SocketNamespaceDecl, con
 		return fmt.Errorf("socket namespace %q already owned by plugin %q", decl.Name, owner.pluginName)
 	}
 	_, alreadyRegistered := b.registered[decl.Name]
-	b.owners[decl.Name] = socketOwner{pluginName: pluginName, conn: conn}
-	if alreadyRegistered {
-		b.mu.Unlock()
-		return nil
+	if !alreadyRegistered {
+		b.installNamespaceHandlersLocked(decl.Name, ns)
+		b.registered[decl.Name] = struct{}{}
 	}
-	b.registered[decl.Name] = struct{}{}
+	b.owners[decl.Name] = newSocketOwner(pluginName, decl, conn)
 	b.mu.Unlock()
+	return nil
+}
 
-	b.server.AddNamespace(decl.Name)
-	ns := b.server.GetNamespace(decl.Name)
-	if ns.Raw() == nil {
-		return fmt.Errorf("failed to create socket namespace %q", decl.Name)
-	}
-	if decl.Protected {
-		ns.AddMiddleware(auth.RequireAuthSocketIO)
+func newSocketOwner(pluginName string, decl SocketNamespaceDecl, conn pluginConn) socketOwner {
+	events := make(map[string]struct{}, len(decl.Events))
+	for _, event := range decl.Events {
+		events[event] = struct{}{}
 	}
 
-	events := append([]string(nil), decl.Events...)
 	protectedEvents := make(map[string]struct{}, len(decl.ProtectedEvents))
 	for _, event := range decl.ProtectedEvents {
 		protectedEvents[event] = struct{}{}
 	}
-	nsName := decl.Name
-	ns.OnConnection(func(client *socket.Socket) {
-		for _, ev := range events {
-			ev := ev
-			client.On(ev, func(data ...any) {
-				if _, isProtected := protectedEvents[ev]; isProtected {
-					if !isSocketAuthenticated(client) {
-						_ = client.Emit("error", map[string]any{
-							"code":    "UNAUTHORIZED",
-							"message": "authentication required",
-							"event":   ev,
-						})
-						return
-					}
-				}
-				b.handle(nsName, ev, client, data)
-			})
+
+	return socketOwner{
+		pluginName:      pluginName,
+		conn:            conn,
+		decl:            cloneSocketNamespaceDecl(decl),
+		events:          events,
+		protectedEvents: protectedEvents,
+	}
+}
+
+func cloneSocketNamespaceDecl(decl SocketNamespaceDecl) SocketNamespaceDecl {
+	decl.Events = append([]string(nil), decl.Events...)
+	decl.ProtectedEvents = append([]string(nil), decl.ProtectedEvents...)
+	return decl
+}
+
+func (b *socketBridge) installNamespaceHandlersLocked(nsName string, ns netx.Namespace) {
+	ns.AddMiddleware(func(client *socket.Socket, next func(*socket.ExtendedError)) {
+		if err := b.authorizeNamespace(nsName, client); err != nil {
+			next(err)
+			return
 		}
+		next(nil)
 	})
-	return nil
+
+	ns.OnConnection(func(client *socket.Socket) {
+		client.OnAny(func(args ...any) {
+			b.handleAny(nsName, client, args)
+		})
+	})
+}
+
+func (b *socketBridge) authorizeNamespace(nsName string, client *socket.Socket) *socket.ExtendedError {
+	owner, ok := b.ownerForNamespace(nsName)
+	if !ok {
+		return socket.NewExtendedError("Unavailable", "namespace is not owned by a running plugin")
+	}
+	if !owner.decl.Protected {
+		return nil
+	}
+
+	var authErr *socket.ExtendedError
+	auth.RequireAuthSocketIO(client, func(err *socket.ExtendedError) {
+		authErr = err
+	})
+	return authErr
 }
 
 // unregisterPlugin releases all namespace ownership held by pluginName. The
-// underlying Socket.IO namespace and connection handler remain installed, but
-// events become no-ops until a plugin registers the namespace again.
+// underlying Socket.IO namespace and dynamic handlers remain installed, but
+// future connections are rejected until a plugin registers the namespace again.
+// Existing sockets are disconnected from the released namespace.
 func (b *socketBridge) unregisterPlugin(pluginName string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var released []string
 	for ns, owner := range b.owners {
 		if owner.pluginName == pluginName {
 			b.owners[ns] = socketOwner{}
+			released = append(released, ns)
 		}
+	}
+	b.mu.Unlock()
+
+	for _, nsName := range released {
+		ns := b.server.GetNamespace(nsName)
+		ns.DisconnectSockets(false)
 	}
 }
 
@@ -124,22 +167,69 @@ func isSocketAuthenticated(client *socket.Socket) bool {
 	return allowed
 }
 
-func (b *socketBridge) handle(ns, event string, client *socket.Socket, data []any) {
-	b.mu.RLock()
-	owner := b.owners[ns]
-	b.mu.RUnlock()
-	conn := owner.conn
-	if conn == nil {
+func (b *socketBridge) handleAny(nsName string, client *socket.Socket, args []any) {
+	event, data, ok := socketEventFromAnyArgs(args)
+	if !ok {
+		b.log.Debug("ignore malformed socket event", "namespace", nsName)
 		return
 	}
 
+	owner, ok := b.ownerForNamespace(nsName)
+	if !ok {
+		return
+	}
+	if !owner.handlesEvent(event) {
+		b.log.Debug("ignore undeclared socket event", "namespace", nsName, "event", event, "plugin", owner.pluginName)
+		return
+	}
+	if owner.protectsEvent(event) && !isSocketAuthenticated(client) {
+		_ = client.Emit("error", map[string]any{
+			"code":    "UNAUTHORIZED",
+			"message": "authentication required",
+			"event":   event,
+		})
+		return
+	}
+
+	b.handle(owner, nsName, event, client, data)
+}
+
+func socketEventFromAnyArgs(args []any) (string, []any, bool) {
+	if len(args) == 0 {
+		return "", nil, false
+	}
+	event, ok := args[0].(string)
+	if !ok || event == "" {
+		return "", nil, false
+	}
+	return event, args[1:], true
+}
+
+func (b *socketBridge) ownerForNamespace(ns string) (socketOwner, bool) {
+	b.mu.RLock()
+	owner := b.owners[ns]
+	b.mu.RUnlock()
+	return owner, owner.pluginName != "" && owner.conn != nil
+}
+
+func (owner socketOwner) handlesEvent(event string) bool {
+	_, ok := owner.events[event]
+	return ok
+}
+
+func (owner socketOwner) protectsEvent(event string) bool {
+	_, ok := owner.protectedEvents[event]
+	return ok
+}
+
+func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socket.Socket, data []any) {
 	payload, err := json.Marshal(data)
 	if err != nil {
 		b.log.Error("marshal socket event payload", "namespace", ns, "event", event, "err", err)
 		return
 	}
 
-	emits, err := conn.HandleSocketEvent(context.Background(), &SocketEvent{
+	emits, err := owner.conn.HandleSocketEvent(context.Background(), &SocketEvent{
 		Namespace: ns,
 		Event:     event,
 		SocketID:  string(client.Id()),

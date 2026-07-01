@@ -120,6 +120,16 @@ func (self Namespace) EmitTo(target, event string, args ...any) error {
 	return self.namespace.To(socket.Room(target)).Emit(event, args...)
 }
 
+// DisconnectSockets disconnects all sockets currently attached to this namespace.
+// When status is false, the underlying Engine.IO connection can remain alive for
+// other namespaces.
+func (self Namespace) DisconnectSockets(status bool) {
+	if self.namespace == nil {
+		return
+	}
+	self.namespace.DisconnectSockets(status)
+}
+
 // GlobalServer holds the singleton Socket.IO server instance
 var (
 	globalServer *Socket
