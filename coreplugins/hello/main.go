@@ -110,3 +110,7 @@ func (helloPlugin) HandleSocketEvent(ctx context.Context, ev *panel.SocketEvent)
 		},
 	}, nil
 }
+
+func (helloPlugin) HandlePluginMessage(_ context.Context, _ *panel.PluginMessage) (*panel.PluginMessageReply, error) {
+	return &panel.PluginMessageReply{}, nil
+}

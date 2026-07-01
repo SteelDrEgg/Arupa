@@ -83,6 +83,7 @@ type pluginEntry struct {
 	config     conf.Plugin
 	discovered bool
 	loaded     *loadedPlugin
+	status     PluginStatus
 }
 
 // httpRouteBinding is a live HTTP route owned by a loaded plugin.
@@ -123,7 +124,40 @@ type DiscoveredPlugin struct {
 type PluginEntry struct {
 	DiscoveredPlugin
 	Config conf.Plugin
-	Loaded bool
+	Status PluginStatus
+}
+
+// PluginStatus describes the runtime lifecycle state of a plugin.
+type PluginStatus string
+
+const (
+	PluginStatusDiscovered PluginStatus = "discovered"
+	PluginStatusStarting   PluginStatus = "starting"
+	PluginStatusRunning    PluginStatus = "running"
+	PluginStatusDegraded   PluginStatus = "degraded"
+	PluginStatusStopping   PluginStatus = "stopping"
+	PluginStatusFailed     PluginStatus = "failed"
+)
+
+func (e *pluginEntry) currentStatus() PluginStatus {
+	if e == nil {
+		return PluginStatusDiscovered
+	}
+	if e.status != "" {
+		return e.status
+	}
+	if e.loaded != nil {
+		return PluginStatusRunning
+	}
+	return PluginStatusDiscovered
+}
+
+func statusAllowsStart(status PluginStatus) bool {
+	return status == PluginStatusDiscovered || status == PluginStatusFailed
+}
+
+func statusIsRunning(status PluginStatus) bool {
+	return status == PluginStatusRunning || status == PluginStatusDegraded
 }
 
 // NewManager builds a plugin manager, registers the plugin HTTP dispatcher on
@@ -309,6 +343,7 @@ func (m *Manager) scanDir(dir string, cfg conf.PluginSystem) error {
 			info:       info,
 			config:     cfg.EffectivePlugin(info.Name),
 			discovered: true,
+			status:     PluginStatusDiscovered,
 		}
 		scanned[info.Name] = struct{}{}
 	}
@@ -327,7 +362,13 @@ func (m *Manager) scanDir(dir string, cfg conf.PluginSystem) error {
 		}
 		if nextEntry, ok := next[name]; ok {
 			nextEntry.loaded = entry.loaded
+			nextEntry.status = entry.currentStatus()
 		} else if entry.loaded != nil {
+			entry.discovered = false
+			entry.config = cfg.EffectivePlugin(name)
+			entry.status = entry.currentStatus()
+			next[name] = entry
+		} else if entry.currentStatus() == PluginStatusStarting || entry.currentStatus() == PluginStatusStopping {
 			entry.discovered = false
 			entry.config = cfg.EffectivePlugin(name)
 			next[name] = entry
@@ -351,7 +392,7 @@ func (m *Manager) scanDir(dir string, cfg conf.PluginSystem) error {
 }
 
 // Entries returns a snapshot of discovered plugins, including effective config
-// and loaded state.
+// and runtime status.
 func (m *Manager) Entries() []PluginEntry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -364,7 +405,7 @@ func (m *Manager) Entries() []PluginEntry {
 		out = append(out, PluginEntry{
 			DiscoveredPlugin: entry.info,
 			Config:           entry.config.Clone(),
-			Loaded:           entry.loaded != nil,
+			Status:           entry.currentStatus(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -388,25 +429,37 @@ func (m *Manager) StartByName(name string) (*loadedPlugin, error) {
 		return nil, fmt.Errorf("plugin name is required")
 	}
 
-	m.mu.RLock()
+	m.mu.Lock()
 	entry, ok := m.plugins[name]
 	if !ok {
-		m.mu.RUnlock()
+		m.mu.Unlock()
 		return nil, fmt.Errorf("plugin %q not found in scan results", name)
 	}
 	if !entry.discovered {
-		m.mu.RUnlock()
+		m.mu.Unlock()
 		return nil, fmt.Errorf("plugin %q is not available in scan results", name)
 	}
-	if entry.loaded != nil {
-		m.mu.RUnlock()
-		return nil, fmt.Errorf("plugin %q is already running", name)
+	status := entry.currentStatus()
+	if !statusAllowsStart(status) {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("plugin %q is %s", name, status)
 	}
+	entry.status = PluginStatusStarting
 	info := entry.info
 	cfg := entry.config.Clone()
-	m.mu.RUnlock()
+	m.mu.Unlock()
 
-	return m.loadScanned(info, cfg)
+	lp, degraded, err := m.loadScanned(info, cfg)
+	if err != nil {
+		m.finishStartFailure(name)
+		return nil, err
+	}
+	if err := m.finishStartSuccess(name, info, cfg, lp, degraded); err != nil {
+		m.cleanupLoaded(name, lp)
+		m.finishStartFailure(name)
+		return nil, err
+	}
+	return lp, nil
 }
 
 // Start starts a previously scanned plugin by name.
@@ -427,25 +480,29 @@ func (m *Manager) Stop(name string) error {
 	entry, ok := m.plugins[name]
 	var lp *loadedPlugin
 	if ok {
+		status := entry.currentStatus()
+		if status == PluginStatusStarting || status == PluginStatusStopping {
+			m.mu.Unlock()
+			return fmt.Errorf("plugin %q is %s", name, status)
+		}
+		if !statusIsRunning(status) || entry.loaded == nil {
+			m.mu.Unlock()
+			return fmt.Errorf("plugin %q is not running", name)
+		}
 		lp = entry.loaded
 		entry.loaded = nil
+		entry.status = PluginStatusStopping
 	}
 	m.mu.Unlock()
 	if lp == nil {
 		return fmt.Errorf("plugin %q is not running", name)
 	}
 
-	if lp.grpcToken != "" {
-		m.hostGRPC.revokeToken(lp.grpcToken)
-	}
-	m.unregisterRoutes(name)
-	m.unregisterStatic(name)
-	m.socket.unregisterPlugin(name)
-	m.registry.Remove(lp.record.InstanceID)
-
-	if err := lp.loader.Unload(lp.handle); err != nil {
+	if err := m.cleanupLoaded(name, lp); err != nil {
+		m.finishStop(name, PluginStatusFailed)
 		return fmt.Errorf("unload plugin %q: %w", name, err)
 	}
+	m.finishStop(name, PluginStatusDiscovered)
 	m.log.Info("stopped plugin", "name", name)
 	return nil
 }
@@ -460,14 +517,53 @@ func (m *Manager) Restart(name string) error {
 
 	m.mu.Lock()
 	entry, ok := m.plugins[name]
-	running := ok && entry.loaded != nil
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("plugin %q not found in scan results", name)
+	}
+	if !entry.discovered {
+		m.mu.Unlock()
+		return fmt.Errorf("plugin %q is not available in scan results", name)
+	}
+	status := entry.currentStatus()
+	if status == PluginStatusStarting || status == PluginStatusStopping {
+		m.mu.Unlock()
+		return fmt.Errorf("plugin %q is %s", name, status)
+	}
+	info := entry.info
+	cfg := entry.config.Clone()
+	lp := entry.loaded
+	if statusIsRunning(status) && lp != nil {
+		entry.loaded = nil
+		entry.status = PluginStatusStopping
+	} else {
+		entry.status = PluginStatusStarting
+	}
 	m.mu.Unlock()
-	if running {
-		if err := m.Stop(name); err != nil {
+
+	if lp != nil {
+		if err := m.cleanupLoaded(name, lp); err != nil {
+			m.finishStop(name, PluginStatusFailed)
 			return err
 		}
+		m.mu.Lock()
+		if entry := m.plugins[name]; entry != nil {
+			entry.status = PluginStatusStarting
+		}
+		m.mu.Unlock()
 	}
-	return m.Start(name)
+
+	next, degraded, err := m.loadScanned(info, cfg)
+	if err != nil {
+		m.finishStartFailure(name)
+		return err
+	}
+	if err := m.finishStartSuccess(name, info, cfg, next, degraded); err != nil {
+		m.cleanupLoaded(name, next)
+		m.finishStartFailure(name)
+		return err
+	}
+	return nil
 }
 
 // StartConfigured starts all discovered plugins whose effective config enables
@@ -478,7 +574,7 @@ func (m *Manager) StartConfigured() error {
 			m.log.Info("plugin auto-start disabled by config", "name", entry.Name)
 			continue
 		}
-		if entry.Loaded {
+		if !statusAllowsStart(entry.Status) {
 			continue
 		}
 		if _, err := m.StartByName(entry.Name); err != nil {
@@ -494,14 +590,43 @@ func (m *Manager) Load(path string) (*loadedPlugin, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m.loadScanned(scanned, m.Config().EffectivePlugin(scanned.Name))
+	cfg := m.Config().EffectivePlugin(scanned.Name)
+	m.mu.Lock()
+	entry, ok := m.plugins[scanned.Name]
+	if !ok {
+		entry = &pluginEntry{
+			info:       scanned,
+			config:     cfg.Clone(),
+			discovered: true,
+			status:     PluginStatusDiscovered,
+		}
+		m.plugins[scanned.Name] = entry
+	}
+	status := entry.currentStatus()
+	if !statusAllowsStart(status) {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("plugin %q is %s", scanned.Name, status)
+	}
+	entry.info = scanned
+	entry.config = cfg.Clone()
+	entry.discovered = true
+	entry.status = PluginStatusStarting
+	m.mu.Unlock()
+
+	lp, degraded, err := m.loadScanned(scanned, cfg)
+	if err != nil {
+		m.finishStartFailure(scanned.Name)
+		return nil, err
+	}
+	if err := m.finishStartSuccess(scanned.Name, scanned, cfg, lp, degraded); err != nil {
+		m.cleanupLoaded(scanned.Name, lp)
+		m.finishStartFailure(scanned.Name)
+		return nil, err
+	}
+	return lp, nil
 }
 
-func (m *Manager) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (*loadedPlugin, error) {
-	if m.registry.Has(scanned.Name) {
-		return nil, fmt.Errorf("plugin instance %q already loaded", scanned.Name)
-	}
-
+func (m *Manager) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (*loadedPlugin, bool, error) {
 	loader := m.inner
 	runAsUser := ""
 	if scanned.Type == "grpc" {
@@ -511,26 +636,26 @@ func (m *Manager) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (*loade
 		var err error
 		loader, err = m.newInner(runAsUser)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
 	handle, err := loader.Load(scanned.PackagePath)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	info := handle.Info()
 	conn, err := m.connFor(info.Type, handle.Client())
 	if err != nil {
 		_ = loader.Unload(handle)
-		return nil, err
+		return nil, false, err
 	}
 
 	instanceID := info.Name
-	if m.registry.Has(instanceID) {
+	if instanceID != scanned.Name {
 		_ = loader.Unload(handle)
-		return nil, fmt.Errorf("plugin instance %q already loaded", instanceID)
+		return nil, false, fmt.Errorf("plugin package name changed from %q to %q while loading", scanned.Name, instanceID)
 	}
 
 	req := RegisterRequest{InstanceID: instanceID}
@@ -540,7 +665,7 @@ func (m *Manager) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (*loade
 		token, err := m.hostGRPC.issueToken(instanceID)
 		if err != nil {
 			_ = loader.Unload(handle)
-			return nil, fmt.Errorf("issue host callback token: %w", err)
+			return nil, false, fmt.Errorf("issue host callback token: %w", err)
 		}
 		grpcToken = token
 		req.HostCallbackAddr = m.hostGRPCAddr
@@ -553,7 +678,7 @@ func (m *Manager) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (*loade
 			m.hostGRPC.revokeToken(grpcToken)
 		}
 		_ = loader.Unload(handle)
-		return nil, fmt.Errorf("register plugin %q: %w", instanceID, err)
+		return nil, false, fmt.Errorf("register plugin %q: %w", instanceID, err)
 	}
 
 	record := &PluginRecord{
@@ -567,51 +692,105 @@ func (m *Manager) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (*loade
 		Namespaces: reg.Namespaces,
 	}
 
+	degraded := false
 	for _, route := range reg.Routes {
 		if err := m.registerRoute(instanceID, route, conn); err != nil {
+			degraded = true
 			m.log.Error("failed to register plugin route", "plugin", instanceID, "pattern", route.Pattern, "err", err)
 		}
 	}
 	for _, mount := range reg.Static {
 		if err := m.registerStatic(instanceID, handle.RootPath(), mount); err != nil {
+			degraded = true
 			m.log.Error("failed to register plugin static mount", "plugin", instanceID, "prefix", mount.Prefix, "dir", mount.Directory, "err", err)
 		}
 	}
 	for _, ns := range reg.Namespaces {
 		if err := m.socket.register(instanceID, ns, conn); err != nil {
+			degraded = true
 			m.log.Error("failed to register plugin socket namespace", "plugin", instanceID, "namespace", ns.Name, "err", err)
 		}
 	}
 
 	lp := &loadedPlugin{loader: loader, handle: handle, conn: conn, record: record, grpcToken: grpcToken}
-	m.mu.Lock()
-	entry, ok := m.plugins[instanceID]
-	if !ok {
-		entry = &pluginEntry{}
-		m.plugins[instanceID] = entry
-	}
-	if entry.loaded != nil {
-		m.mu.Unlock()
-		if grpcToken != "" {
-			m.hostGRPC.revokeToken(grpcToken)
-		}
-		_ = loader.Unload(handle)
-		return nil, fmt.Errorf("plugin instance %q already loaded", instanceID)
-	}
-	entry.info = scanned
-	entry.config = cfg.Clone()
-	entry.discovered = true
-	entry.loaded = lp
-	m.mu.Unlock()
-	m.registry.Add(record)
 
 	logArgs := []any{"name", reg.Name, "version", reg.Version, "type", info.Type,
 		"routes", len(reg.Routes), "static_mounts", len(reg.Static), "namespaces", len(reg.Namespaces)}
 	if info.Type == "grpc" && runAsUser != "" {
 		logArgs = append(logArgs, "run_as_user", runAsUser)
 	}
-	m.log.Info("loaded plugin", logArgs...)
-	return lp, nil
+	if degraded {
+		m.log.Warn("loaded plugin with degraded host bindings", logArgs...)
+	} else {
+		m.log.Info("loaded plugin", logArgs...)
+	}
+	return lp, degraded, nil
+}
+
+func (m *Manager) finishStartSuccess(name string, scanned DiscoveredPlugin, cfg conf.Plugin, lp *loadedPlugin, degraded bool) error {
+	m.mu.Lock()
+	entry, ok := m.plugins[name]
+	if !ok {
+		entry = &pluginEntry{}
+		m.plugins[name] = entry
+	}
+	if entry.currentStatus() != PluginStatusStarting {
+		status := entry.currentStatus()
+		m.mu.Unlock()
+		return fmt.Errorf("plugin %q start completed while status is %s", name, status)
+	}
+	entry.info = scanned
+	entry.config = cfg.Clone()
+	entry.discovered = true
+	entry.loaded = lp
+	if degraded {
+		entry.status = PluginStatusDegraded
+	} else {
+		entry.status = PluginStatusRunning
+	}
+	m.mu.Unlock()
+
+	m.registry.Add(lp.record)
+	return nil
+}
+
+func (m *Manager) finishStartFailure(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if entry := m.plugins[name]; entry != nil && entry.currentStatus() == PluginStatusStarting {
+		entry.loaded = nil
+		entry.status = PluginStatusFailed
+	}
+}
+
+func (m *Manager) finishStop(name string, status PluginStatus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if entry := m.plugins[name]; entry != nil && entry.currentStatus() == PluginStatusStopping {
+		entry.loaded = nil
+		entry.status = status
+	}
+}
+
+func (m *Manager) cleanupLoaded(name string, lp *loadedPlugin) error {
+	if lp == nil {
+		return nil
+	}
+	if lp.grpcToken != "" && m.hostGRPC != nil {
+		m.hostGRPC.revokeToken(lp.grpcToken)
+	}
+	m.unregisterRoutes(name)
+	m.unregisterStatic(name)
+	if m.socket != nil {
+		m.socket.unregisterPlugin(name)
+	}
+	if m.registry != nil && lp.record != nil {
+		m.registry.Remove(lp.record.InstanceID)
+	}
+	if lp.loader != nil && lp.handle != nil {
+		return lp.loader.Unload(lp.handle)
+	}
+	return nil
 }
 
 func readPluginInfo(path string) (DiscoveredPlugin, error) {
@@ -714,23 +893,24 @@ func (m *Manager) Close() error {
 		if entry.loaded != nil {
 			plugins = append(plugins, entry.loaded)
 			entry.loaded = nil
+			entry.status = PluginStatusStopping
+		} else if entry.currentStatus() == PluginStatusStarting {
+			entry.status = PluginStatusFailed
 		}
 	}
 	m.mu.Unlock()
 
 	for _, lp := range plugins {
-		if lp.grpcToken != "" {
-			m.hostGRPC.revokeToken(lp.grpcToken)
-		}
-		m.unregisterRoutes(lp.record.InstanceID)
-		m.unregisterStatic(lp.record.InstanceID)
-		m.socket.unregisterPlugin(lp.record.InstanceID)
-		m.registry.Remove(lp.record.InstanceID)
-		if err := lp.loader.Unload(lp.handle); err != nil {
+		if err := m.cleanupLoaded(lp.record.InstanceID, lp); err != nil {
 			m.log.Error("failed to unload plugin", "plugin", lp.record.InstanceID, "err", err)
+			m.finishStop(lp.record.InstanceID, PluginStatusFailed)
+			continue
 		}
+		m.finishStop(lp.record.InstanceID, PluginStatusDiscovered)
 	}
 
-	m.hostGRPC.Stop()
+	if m.hostGRPC != nil {
+		m.hostGRPC.Stop()
+	}
 	return nil
 }

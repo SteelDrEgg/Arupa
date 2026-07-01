@@ -25,17 +25,18 @@ type pluginConfigRequest struct {
 }
 
 // pluginView is the catalog row returned to the management UI. It combines
-// scanned package metadata with the current runtime loaded flag.
+// scanned package metadata with the current runtime status.
 type pluginView struct {
-	Name            string         `json:"name"`
-	Version         string         `json:"version"`
-	Type            string         `json:"type"`
-	ContractVersion int            `json:"contract_version"`
-	Command         string         `json:"command"`
-	PackagePath     string         `json:"package_path"`
-	Config          conf.Plugin    `json:"config"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
-	Loaded          bool           `json:"loaded"`
+	Name            string              `json:"name"`
+	Version         string              `json:"version"`
+	Type            string              `json:"type"`
+	ContractVersion int                 `json:"contract_version"`
+	Command         string              `json:"command"`
+	PackagePath     string              `json:"package_path"`
+	Config          conf.Plugin         `json:"config"`
+	Metadata        map[string]any      `json:"metadata,omitempty"`
+	Status          plugin.PluginStatus `json:"status"`
+	Loaded          bool                `json:"loaded"`
 }
 
 // StartPlugin registers plugin management endpoints used by frontend pages.
@@ -79,7 +80,8 @@ func handlePluginList(w http.ResponseWriter, r *http.Request, pm *plugin.Manager
 			PackagePath:     entry.PackagePath,
 			Config:          entry.Config,
 			Metadata:        entry.Metadata,
-			Loaded:          entry.Loaded,
+			Status:          entry.Status,
+			Loaded:          entry.Status == plugin.PluginStatusRunning || entry.Status == plugin.PluginStatusDegraded,
 		})
 	}
 
