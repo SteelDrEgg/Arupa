@@ -1,12 +1,14 @@
 package conf
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/renameio"
 )
 
 var (
@@ -64,14 +66,20 @@ func Write(conf Config) (err error) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	f, err := os.Create(Path)
-	if err != nil {
-		return fmt.Errorf("failed to create config file %w", err)
-	}
-	defer f.Close()
-	err = toml.NewEncoder(f).Encode(conf)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(conf); err != nil {
 		return fmt.Errorf("failed to write config file %w", err)
+	}
+
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(Path); err == nil {
+		mode = st.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat config file %w", err)
+	}
+
+	if err := renameio.WriteFile(Path, buf.Bytes(), mode); err != nil {
+		return fmt.Errorf("failed to replace config file %w", err)
 	}
 
 	// Update global config after successful write
