@@ -12,7 +12,8 @@ import (
 // Socket represents a wrapper around the Socket.IO server
 type Socket struct {
 	sock       *socket.Server
-	Namespaces map[string]Namespace
+	mu         sync.RWMutex
+	namespaces map[string]Namespace
 }
 
 // Initialize configures and creates the Socket.IO server
@@ -25,29 +26,38 @@ func (self *Socket) Initialize() {
 	))
 	opts.SetMaxHttpBufferSize(1e7) // 10MB
 	self.sock = socket.NewServer(nil, opts)
-	self.Namespaces = make(map[string]Namespace)
+	self.namespaces = make(map[string]Namespace)
 }
 
 // AddNamespace creates a new Socket.IO namespace and adds it to the server.
 // It is idempotent: calling it again for an existing namespace is a no-op.
 func (self *Socket) AddNamespace(name string) {
-	if _, ok := self.Namespaces[name]; ok {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+
+	if _, ok := self.namespaces[name]; ok {
 		return
 	}
 	namespace := Namespace{namespace: self.sock.Of(name, nil)}
 	namespace.Initialize()
-	self.Namespaces[name] = namespace
+	self.namespaces[name] = namespace
 }
 
 // HasNamespace reports whether the named namespace has been added.
 func (self *Socket) HasNamespace(name string) bool {
-	_, ok := self.Namespaces[name]
+	self.mu.RLock()
+	defer self.mu.RUnlock()
+
+	_, ok := self.namespaces[name]
 	return ok
 }
 
 // GetNamespace returns the desired namespace
 func (self *Socket) GetNamespace(name string) Namespace {
-	return self.Namespaces[name]
+	self.mu.RLock()
+	defer self.mu.RUnlock()
+
+	return self.namespaces[name]
 }
 
 // Handler returns an HTTP handler for the Socket.IO server
@@ -170,7 +180,7 @@ func Start(addr string) error {
 	server.Initialize()
 	server.AddNamespace("/ttt")
 
-	defaultNamespace := server.Namespaces["/ttt"]
+	defaultNamespace := server.GetNamespace("/ttt")
 
 	defaultNamespace.AddEvent("message", func(client *socket.Socket, data ...any) {
 		client.Emit("message", data...)
