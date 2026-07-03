@@ -216,6 +216,17 @@
             return plugin.name;
         }
 
+        function pluginIcon(plugin) {
+            if (plugin.metadata && plugin.metadata.Icon) return plugin.metadata.Icon;
+            if (plugin.metadata && plugin.metadata.icon) return plugin.metadata.icon;
+            return "/assets/icon/puzzle.svg";
+        }
+
+        function iconStyle(url) {
+            const safeURL = String(url || "/assets/icon/puzzle.svg").replace(/'/g, "%27");
+            return `--icon-url: url('${safeURL}')`;
+        }
+
         function stripPluginsPrefix(path) {
             const value = String(path || "").trim();
             if (!value) return "-";
@@ -337,12 +348,13 @@
                 const startDisabled = canRunAction("start", status) ? "" : "disabled";
                 const restartDisabled = canRunAction("restart", status) ? "" : "disabled";
                 const stopDisabled = canRunAction("stop", status) ? "" : "disabled";
+                const icon = pluginIcon(plugin);
                 return `
                     <tr>
                         <td>
                             <div class="flex min-w-52 items-center gap-3">
                                 <div class="grid size-8 shrink-0 place-items-center rounded-lg bg-accent/20 text-accent-content">
-                                    <span class="icon puzzle" aria-hidden="true"></span>
+                                    <span class="icon" style="${escapeHTML(iconStyle(icon))}" aria-hidden="true"></span>
                                 </div>
                                 <div class="min-w-0">
                                     <div class="truncate font-semibold" title="${escapeHTML(plugin.name)}">${escapeHTML(pluginDisplayName(plugin))}</div>
