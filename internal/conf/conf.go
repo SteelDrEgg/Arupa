@@ -14,7 +14,11 @@ import (
 var (
 	Path string       // Config path
 	mu   sync.RWMutex // Protects access to Conf
-	Conf = Config{    // Default values
+	Conf = defaultConfig()
+)
+
+func defaultConfig() Config {
+	return Config{
 		SSHConfigPath: "~/.ssh",
 		Listen:        ":8080",
 		Auth:          Auth{},
@@ -23,7 +27,7 @@ var (
 			PluginTempDir: "tmp",
 		},
 	}
-)
+}
 
 // LoadConfig Set Path and load config into memory
 // Run this at start
@@ -51,10 +55,12 @@ func Update() (err error) {
 	if _, err = os.Stat(Path); os.IsNotExist(err) {
 		return fmt.Errorf("config file does not exist: %s", Path)
 	}
-	_, err = toml.DecodeFile(Path, &Conf)
+	next := defaultConfig()
+	_, err = toml.DecodeFile(Path, &next)
 	if err != nil {
 		return fmt.Errorf("failed to update global config %w", err)
 	}
+	Conf = next
 	return nil
 }
 
@@ -102,6 +108,12 @@ func Read() Config {
 	// Copy the users map
 	for k, v := range Conf.Auth.Users {
 		conf.Auth.Users[k] = v
+	}
+	if len(Conf.Pages) > 0 {
+		conf.Pages = make(map[string]string, len(Conf.Pages))
+		for k, v := range Conf.Pages {
+			conf.Pages[k] = v
+		}
 	}
 
 	return conf

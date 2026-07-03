@@ -5,6 +5,7 @@ type Config struct {
 	Listen        string
 	Auth
 	PluginSystem
+	Pages map[string]string
 }
 
 type Auth struct {

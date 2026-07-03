@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"minimalpanel/internal/auth"
+	"minimalpanel/internal/conf"
 	"minimalpanel/internal/netx"
 )
 
@@ -76,6 +77,10 @@ func (router *pluginRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if routeLen >= 0 {
 		writeMethodNotAllowed(w, allowedMethods)
+		return
+	}
+	if page, ok := conf.GetPagePath(http.StatusNotFound); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
+		http.Redirect(w, r, page, http.StatusSeeOther)
 		return
 	}
 	_ = netx.WriteNotFound(w)
@@ -196,6 +201,10 @@ func (router *pluginRouter) handlePluginRoute(pattern string, route HTTPRoute, l
 	}
 	if route.Protected {
 		if _, ok := auth.IsAuthenticated(r); !ok {
+			if page, ok := conf.GetPagePath(http.StatusUnauthorized); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
+				http.Redirect(w, r, page, http.StatusSeeOther)
+				return
+			}
 			_ = netx.WriteUnauthorized(w, "authentication required")
 			return
 		}

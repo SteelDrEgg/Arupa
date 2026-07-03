@@ -1,9 +1,12 @@
 package auth
 
 import (
-	"github.com/zishang520/socket.io/servers/socket/v3"
+	"minimalpanel/internal/conf"
+	"minimalpanel/internal/netx"
 	"net/http"
 	"strings"
+
+	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
 // RequireAuth is a middleware that checks authentication for protected routes
@@ -11,7 +14,11 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, authenticated := IsAuthenticated(r)
 		if !authenticated {
-			http.Redirect(w, r, "/pages/login.html", http.StatusSeeOther)
+			if page, ok := conf.GetPagePath(http.StatusUnauthorized); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
+				http.Redirect(w, r, page, http.StatusSeeOther)
+				return
+			}
+			_ = netx.WriteUnauthorized(w, "Not authenticated")
 			return
 		}
 		next(w, r)

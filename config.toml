@@ -3,6 +3,9 @@ Listen = ":8080"
 PluginDir = "plugins"
 PluginTempDir = "tmp"
 
+[Pages]
+  "401" = "/pages/login.html"
+
 [Users]
   admin = "$2a$10$MnmhGyn4pELBONBmkY.XDOcEXDUJjMYPtVnFrdTQLeJYPZCLEJFeS"
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"minimalpanel/internal/auth"
+	"minimalpanel/internal/conf"
 	"minimalpanel/internal/netx"
 )
 
@@ -132,6 +133,10 @@ func (router *pluginRouter) matchPluginStatic(path string) (StaticMount, http.Ha
 func (router *pluginRouter) handlePluginStatic(mount StaticMount, handler http.Handler, w http.ResponseWriter, r *http.Request) {
 	if mount.Protected {
 		if _, ok := auth.IsAuthenticated(r); !ok {
+			if page, ok := conf.GetPagePath(http.StatusUnauthorized); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
+				http.Redirect(w, r, page, http.StatusSeeOther)
+				return
+			}
 			_ = netx.WriteUnauthorized(w, "authentication required")
 			return
 		}
