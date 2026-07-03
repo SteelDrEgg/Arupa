@@ -72,7 +72,7 @@
         // Auto-logout if already logged out
         window.addEventListener('load', async function() {
             try {
-                const response = await fetch('/check-auth');
+                const response = await fetch('/api/check-auth');
                 const data = await response.json();
                 
                 if (!data.success) {
