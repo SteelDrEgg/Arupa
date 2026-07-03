@@ -1,0 +1,37 @@
+SSHConfigPath = "~/.ssh"
+Listen = ":8080"
+PluginDir = "plugins"
+PluginTempDir = "tmp"
+
+[Users]
+  admin = "$2a$10$MnmhGyn4pELBONBmkY.XDOcEXDUJjMYPtVnFrdTQLeJYPZCLEJFeS"
+
+[Plugins]
+  [Plugins.default]
+    Restart = "no"
+    RunAsUser = ""
+  [Plugins.hello]
+    Restart = ""
+    RunAsUser = ""
+    [Plugins.hello.Params]
+      greeting = "test message"
+  [Plugins.login]
+    Restart = "always"
+    RunAsUser = ""
+  [Plugins.navigator]
+    Restart = "always"
+    RunAsUser = ""
+    [Plugins.navigator.Params]
+      order = "ssh,plugin-manager,hello"
+      ignore = "login,web-assets,navigator"
+  [Plugins.plugin-manager]
+    Restart = "always"
+    RunAsUser = ""
+  [Plugins.ssh]
+    Restart = "always"
+    RunAsUser = ""
+    [Plugins.ssh.Params]
+      ssh_config_path = "~/.ssh/config"
+  [Plugins.web-assets]
+    Restart = "always"
+    RunAsUser = ""

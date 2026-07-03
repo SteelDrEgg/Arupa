@@ -18,9 +18,6 @@ var (
 		SSHConfigPath: "~/.ssh",
 		Listen:        ":8080",
 		Auth:          Auth{},
-		Web: Web{
-			RootPath: "web",
-		},
 		PluginSystem: PluginSystem{
 			PluginDir:     "plugins",
 			PluginTempDir: "tmp",
@@ -99,7 +96,6 @@ func Read() Config {
 		Auth: Auth{
 			Users: make(map[string]string),
 		},
-		Web:          Conf.Web,
 		PluginSystem: Conf.PluginSystem.Clone(),
 	}
 
@@ -128,13 +124,6 @@ func GetUsers() map[string]string {
 		users[k] = v
 	}
 	return users
-}
-
-// GetWeb returns the Web config in a thread-safe manner
-func GetWeb() Web {
-	mu.RLock()
-	defer mu.RUnlock()
-	return Conf.Web
 }
 
 // GetPluginSystem returns the plugin-system config in a thread-safe manner.

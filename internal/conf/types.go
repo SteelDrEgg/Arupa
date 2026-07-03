@@ -4,16 +4,11 @@ type Config struct {
 	SSHConfigPath string
 	Listen        string
 	Auth
-	Web
 	PluginSystem
 }
 
 type Auth struct {
 	Users map[string]string
-}
-
-type Web struct {
-	RootPath string
 }
 
 // PluginSystem holds plugin manager configuration and per-plugin policy.

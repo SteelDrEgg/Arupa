@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,8 +21,11 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	if err := conf.LoadConfig("config.toml"); err != nil {
-		logger.Warn("failed to load config; using defaults", "err", err)
+	configPath := flag.String("config", "config.toml", "path to config file")
+	flag.Parse()
+
+	if err := conf.LoadConfig(*configPath); err != nil {
+		logger.Warn("failed to load config; using defaults", "path", *configPath, "err", err)
 	}
 	cfg := conf.Read()
 
