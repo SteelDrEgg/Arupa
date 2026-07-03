@@ -5,3 +5,6 @@ ContractVersion: 1
 Command: $PLUGIN_ROOT/hello.wasm
 DisplayName: Hello
 Category: core
+Entry: /hello
+Icon: /assets/icon/letter-m-square-solid.svg
+IconSolid: /assets/icon/letter-m-square-solid.svg

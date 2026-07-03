@@ -3,5 +3,8 @@ Version: 0.1.0
 Type: wasm
 ContractVersion: 1
 Command: $PLUGIN_ROOT/plugin_manager.wasm
-DisplayName: Plugin Manager
+DisplayName: Plugins
 Category: core
+Entry: /pages/plugins.html
+Icon: /assets/icon/puzzle.svg
+IconSolid: /assets/icon/puzzle-solid.svg

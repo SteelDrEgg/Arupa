@@ -4,7 +4,7 @@ PROTOC_GEN_GO_PLUGIN := $(GOBIN)/protoc-gen-go-plugin
 PLUGIN_DIR := plugins
 DIST_DIR := dist
 
-.PHONY: tools proto proto-grpc proto-wasm build run hello hello-wasm web-assets web-assets-wasm login login-wasm plugin-manager plugin-manager-wasm ssh ssh-grpc clean
+.PHONY: tools proto proto-grpc proto-wasm build run hello hello-wasm web-assets web-assets-wasm login login-wasm navigator navigator-wasm plugin-manager plugin-manager-wasm ssh ssh-grpc clean
 
 ## tools: install the protobuf generators used by `make proto`
 tools:
@@ -80,6 +80,20 @@ login-wasm:
 	mkdir -p $(DIST_DIR)
 	GOOS=wasip1 GOARCH=wasm go build -o $(DIST_DIR)/login.wasm -buildmode=c-shared ./coreplugins/login
 
+## navigator: build and package navigator shell into plugins/navigator.plg
+navigator: navigator-wasm
+	rm -rf $(DIST_DIR)/navigator_pkg
+	mkdir -p $(DIST_DIR)/navigator_pkg/Content/pages $(PLUGIN_DIR)
+	cp $(DIST_DIR)/navigator.wasm $(DIST_DIR)/navigator_pkg/Content/navigator.wasm
+	cp coreplugins/navigator/info.yaml $(DIST_DIR)/navigator_pkg/info.yaml
+	cp coreplugins/navigator/pages/index.html $(DIST_DIR)/navigator_pkg/Content/pages/index.html
+	cd $(DIST_DIR)/navigator_pkg && zip -qr ../../$(PLUGIN_DIR)/navigator.plg .
+	rm -rf $(DIST_DIR)/navigator_pkg
+
+navigator-wasm:
+	mkdir -p $(DIST_DIR)
+	GOOS=wasip1 GOARCH=wasm go build -o $(DIST_DIR)/navigator.wasm -buildmode=c-shared ./coreplugins/navigator
+
 ## plugin-manager: build and package plugin manager page into plugins/plugin-manager.plg
 plugin-manager: plugin-manager-wasm
 	rm -rf $(DIST_DIR)/plugin_manager_pkg
@@ -111,4 +125,4 @@ ssh-grpc:
 
 ## clean: remove build artifacts
 clean:
-	rm -rf $(DIST_DIR) $(PLUGIN_DIR)/hello.plg $(PLUGIN_DIR)/web-assets.plg $(PLUGIN_DIR)/login.plg $(PLUGIN_DIR)/plugin-manager.plg $(PLUGIN_DIR)/ssh.plg tmp
+	rm -rf $(DIST_DIR) $(PLUGIN_DIR)/hello.plg $(PLUGIN_DIR)/web-assets.plg $(PLUGIN_DIR)/login.plg $(PLUGIN_DIR)/navigator.plg $(PLUGIN_DIR)/plugin-manager.plg $(PLUGIN_DIR)/ssh.plg tmp

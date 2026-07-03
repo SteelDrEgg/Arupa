@@ -3,5 +3,8 @@ Version: 0.1.0
 Type: grpc
 ContractVersion: 1
 Command: $PLUGIN_ROOT/ssh-plugin
-DisplayName: SSH Terminal
+DisplayName: SSH
 Category: core
+Entry: /pages/terminal.html
+Icon: /assets/icon/terminal.svg
+IconSolid: /assets/icon/terminal-solid.svg
