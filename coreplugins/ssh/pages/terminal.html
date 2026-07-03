@@ -74,12 +74,6 @@
             }
         }
 
-        .connect-button.connected {
-            background-color: var(--color-error);
-            border-color: var(--color-error);
-            color: var(--color-error-content);
-        }
-
         .terminal-container {
             height: calc(100vh - 4rem);
             padding: 1rem;
@@ -126,13 +120,13 @@
     <!-- Top Bar -->
     <div class="navbar min-h-16 border-b border-base-300 bg-base-100 px-4">
         <div class="min-w-0 flex-1">
-            <div class="badge badge-outline min-w-0 max-w-full gap-2 px-3 py-3">
+            <div style="outline: none;border: none" class="badge min-w-0 max-w-full gap-2 px-3 py-3">
                 <div class="status-indicator" id="statusIndicator"></div>
                 <span class="truncate" id="statusText">Not connected</span>
             </div>
         </div>
         <button id="connectBtn" class="btn btn-primary connect-button" onclick="openConnectionModal()">
-            <span class="icon terminal" aria-hidden="true"></span>
+<!--            <span class="icon terminal" aria-hidden="true"></span>-->
             Connect
         </button>
     </div>
@@ -197,7 +191,7 @@
             </div>
 
             <button class="btn btn-primary mt-5 w-full" onclick="connectFromModal()">
-                <span class="icon terminal" aria-hidden="true"></span>
+<!--                <span class="icon terminal" aria-hidden="true"></span>-->
                 Connect
             </button>
         </div>
@@ -296,10 +290,12 @@
             
             if (status === 'connected') {
                 setConnectButtonLabel('Disconnect');
-                connectBtn.classList.add('connected');
+                connectBtn.classList.add('btn-error');
+                connectBtn.classList.remove('btn-primary');
             } else {
                 setConnectButtonLabel('Connect');
-                connectBtn.classList.remove('connected');
+                connectBtn.classList.add('btn-primary');
+                connectBtn.classList.remove('btn-error');
             }
         }
 
