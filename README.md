@@ -1,20 +1,22 @@
-<div align="center"><h1>MinimalPanel (WIP)</h1></div>
+<div align="center"><h1>MinimalPanel</h1></div>
 <p align="center">
-<img width="80%" src="doc/dash.png" alt="Dashboard" />
-<p align="center"><em>Prototype Preview</em></p>
-</p>
+<img width="80%" src="doc/plugins.png" alt="Plugin page" />
 
-❌ Bulky \
-❌ Over-engineering \
-❌ Nontransparent
+<div align="center">
 
-✅ Simple \
-✅ Primitive \
-✅ WYSIWYG
+<a href="">![WIP](https://img.shields.io/badge/status-WIP-yellow)</a>
+<a href="">![Golang](https://img.shields.io/badge/language-Go-blue)</a>
+
+</div>
+
+Server management panel written in Golang with a minimal kernel and a plugin system.
+
+All features are implemented using plugins that can be written in any languages. 
 
 ### Roadmap
-- [x] Dashboard
+
+#### Core plugins
+- [ ] Dashboard
 - [x] Web SSH terminal
 - [ ] File manager
 - [ ] Speedtest
-- [ ] CRON integration (use system cron)
