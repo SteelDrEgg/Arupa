@@ -1,0 +1,40 @@
+package main
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+)
+
+func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	opts, err := parseCLI(os.Args[1:], os.Stderr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "minimalpanel: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run `minimalpanel -help` for usage.")
+		os.Exit(2)
+	}
+	if opts.ShowHelp {
+		helpOpts := cliOptions{ConfigPath: defaultConfigPath}
+		fs := flagSetForHelp(os.Stdout, &helpOpts)
+		writeUsage(os.Stdout, fs)
+		return
+	}
+
+	if opts.Username != "" {
+		if err := createOrUpdateUser(opts.ConfigPath, opts.Username, opts.Password); err != nil {
+			logger.Error("failed to write user to config", "path", opts.ConfigPath, "user", opts.Username, "err", err)
+			os.Exit(1)
+		}
+		logger.Info("user written to config", "path", opts.ConfigPath, "user", opts.Username)
+		return
+	}
+
+	cfg := loadServerConfig(opts.ConfigPath, logger)
+	if err := runServer(cfg, logger); err != nil {
+		logger.Error("server stopped with error", "err", err)
+		os.Exit(1)
+	}
+}
