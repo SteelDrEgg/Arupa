@@ -3,6 +3,8 @@ PROTOC_GEN_GO_PLUGIN := $(GOBIN)/protoc-gen-go-plugin
 
 PLUGIN_DIR := plugins
 DIST_DIR := dist
+VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+LDFLAGS_VER := -X main.version=$(VERSION)
 
 .PHONY: tools proto proto-grpc proto-wasm build run hello hello-wasm web-assets web-assets-wasm login login-wasm navigator navigator-wasm plugin-manager plugin-manager-wasm ssh ssh-grpc clean
 
@@ -31,11 +33,11 @@ proto-wasm:
 ## build: build the host server binary
 build:
 	mkdir -p $(DIST_DIR)
-	go build -o $(DIST_DIR)/minimalpanel ./cmd
+	go build -ldflags "$(LDFLAGS_VER)" -o $(DIST_DIR)/minimalpanel ./cmd
 
 ## run: run the host server
 run:
-	go run ./cmd
+	go run -ldflags "$(LDFLAGS_VER)" ./cmd
 
 ## hello: build and package the hello WASM plugin into plugins/hello.plg
 hello: hello-wasm

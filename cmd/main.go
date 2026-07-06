@@ -22,6 +22,10 @@ func main() {
 		writeUsage(os.Stdout, fs)
 		return
 	}
+	if opts.ShowVersion {
+		fmt.Fprintf(os.Stdout, "Kernel %s\n", version)
+		return
+	}
 
 	if opts.Username != "" {
 		if err := createOrUpdateUser(opts.ConfigPath, opts.Username, opts.Password); err != nil {

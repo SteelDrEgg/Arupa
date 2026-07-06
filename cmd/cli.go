@@ -11,10 +11,11 @@ import (
 const defaultConfigPath = "config.toml"
 
 type cliOptions struct {
-	ConfigPath string
-	Username   string
-	Password   string
-	ShowHelp   bool
+	ConfigPath  string
+	Username    string
+	Password    string
+	ShowHelp    bool
+	ShowVersion bool
 }
 
 func parseCLI(args []string, output io.Writer) (cliOptions, error) {
@@ -40,6 +41,9 @@ func parseCLI(args []string, output io.Writer) (cliOptions, error) {
 	if opts.ShowHelp {
 		return opts, nil
 	}
+	if opts.ShowVersion {
+		return opts, nil
+	}
 	if opts.Username == "" && opts.Password != "" {
 		return opts, fmt.Errorf("-password requires -user")
 	}
@@ -62,6 +66,7 @@ func registerFlags(fs *flag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.Password, "password", "", "password for -user")
 	fs.BoolVar(&opts.ShowHelp, "help", false, "show help")
 	fs.BoolVar(&opts.ShowHelp, "h", false, "show help")
+	fs.BoolVar(&opts.ShowVersion, "version", false, "show version")
 }
 
 func writeUsage(w io.Writer, fs *flag.FlagSet) {
