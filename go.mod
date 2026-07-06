@@ -6,11 +6,8 @@ require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/SteelDrEgg/go-plugin v0.1.3
 	github.com/google/renameio v1.0.1
-	github.com/hashicorp/go-plugin v1.8.0
-	github.com/kevinburke/ssh_config v1.4.0
 	github.com/knqyf263/go-plugin v0.9.0
 	github.com/shirou/gopsutil/v4 v4.25.8
-	github.com/spf13/cast v1.9.2
 	github.com/tetratelabs/wazero v1.9.0
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.4
 	github.com/zishang520/socket.io/servers/socket/v3 v3.0.4
@@ -31,6 +28,7 @@ require (
 	github.com/gookit/color v1.6.1 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
+	github.com/hashicorp/go-plugin v1.8.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
@@ -49,13 +47,8 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.4 // indirect
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.4 // indirect
-	github.com/zishang520/webtransport-go v0.9.1 // indirect
-	go.uber.org/mock v0.6.0 // indirect
-	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 )
