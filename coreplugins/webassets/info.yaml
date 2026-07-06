@@ -1,7 +1,0 @@
-Name: web-assets
-Version: 0.1.0
-Type: wasm
-ContractVersion: 1
-Command: $PLUGIN_ROOT/web_assets.wasm
-DisplayName: Web Assets
-Category: core
