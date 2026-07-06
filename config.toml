@@ -1,4 +1,3 @@
-SSHConfigPath = "~/.ssh"
 Listen = ":8080"
 PluginDir = "plugins"
 PluginTempDir = "tmp"

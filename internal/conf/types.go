@@ -1,8 +1,7 @@
 package conf
 
 type Config struct {
-	SSHConfigPath string
-	Listen        string
+	Listen string
 	Auth
 	PluginSystem
 	Pages map[string]string

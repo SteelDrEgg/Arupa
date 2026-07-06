@@ -20,9 +20,8 @@ var (
 
 func defaultConfig() Config {
 	return Config{
-		SSHConfigPath: "~/.ssh",
-		Listen:        ":8080",
-		Auth:          Auth{},
+		Listen: ":8080",
+		Auth:   Auth{},
 		PluginSystem: PluginSystem{
 			PluginDir:     "plugins",
 			PluginTempDir: "tmp",
@@ -103,8 +102,7 @@ func Read() Config {
 
 	// Create a deep copy of the config
 	conf := Config{
-		SSHConfigPath: Conf.SSHConfigPath,
-		Listen:        Conf.Listen,
+		Listen: Conf.Listen,
 		Auth: Auth{
 			Users: make(map[string]string),
 		},
@@ -123,13 +121,6 @@ func Read() Config {
 	}
 
 	return conf
-}
-
-// GetSSHConfigPath returns the SSH config path in a thread-safe manner
-func GetSSHConfigPath() string {
-	mu.RLock()
-	defer mu.RUnlock()
-	return Conf.SSHConfigPath
 }
 
 // GetUsers returns a copy of the users map in a thread-safe manner
