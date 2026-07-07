@@ -4,8 +4,8 @@
 
 <div align="center">
 
-<a href="">![WIP](https://img.shields.io/badge/status-WIP-yellow)</a>
-<a href="">![Golang](https://img.shields.io/badge/language-Go-blue)</a>
+[![Release](https://github.com/SteelDrEgg/Arupa/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/SteelDrEgg/Arupa/actions/workflows/release.yml)
+[![CI](https://github.com/SteelDrEgg/Arupa/actions/workflows/ci.yml/badge.svg)](https://github.com/SteelDrEgg/Arupa/actions/workflows/ci.yml)
 
 </div>
 
