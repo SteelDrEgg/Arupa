@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"minimalpanel/internal/auth"
-	"minimalpanel/internal/conf"
+	"arupa/internal/auth"
+	"arupa/internal/conf"
 )
 
 func createOrUpdateUser(configPath, username, password string) error {

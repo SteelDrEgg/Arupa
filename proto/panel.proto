@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package panel.v1;
 
-option go_package = "minimalpanel/pluginsdk/proto";
+option go_package = "arupa/pluginsdk/proto";
 
 // ===== HTTP =====
 message HTTPRoute {

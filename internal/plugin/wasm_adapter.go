@@ -3,8 +3,9 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"sync"
 
-	wasmpb "minimalpanel/pluginsdk/wasm/proto"
+	wasmpb "arupa/pluginsdk/wasm/proto"
 )
 
 // wasmHostFns implements the generated wasmpb.Host interface by delegating to
@@ -85,9 +86,17 @@ func (w wasmHostFns) Log(_ context.Context, req *wasmpb.LogRequest) (*wasmpb.Log
 // pluginConn interface.
 type wasmConn struct {
 	client wasmpb.Plugin
+	mu     sync.Mutex
 }
 
-func (c wasmConn) Register(ctx context.Context, req RegisterRequest) (*RegisterResult, error) {
+func newWASMConn(client wasmpb.Plugin) *wasmConn {
+	return &wasmConn{client: client}
+}
+
+func (c *wasmConn) Register(ctx context.Context, req RegisterRequest) (*RegisterResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	reply, err := c.client.Register(ctx, &wasmpb.RegisterRequest{
 		InstanceId:        req.InstanceID,
 		HostCallbackAddr:  req.HostCallbackAddr,
@@ -124,7 +133,10 @@ func (c wasmConn) Register(ctx context.Context, req RegisterRequest) (*RegisterR
 	return res, nil
 }
 
-func (c wasmConn) HandleHTTP(ctx context.Context, req *HTTPRequest) (*HTTPResponse, error) {
+func (c *wasmConn) HandleHTTP(ctx context.Context, req *HTTPRequest) (*HTTPResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	resp, err := c.client.HandleHTTP(ctx, &wasmpb.HTTPRequest{
 		RoutePattern: req.RoutePattern,
 		Method:       req.Method,
@@ -144,7 +156,10 @@ func (c wasmConn) HandleHTTP(ctx context.Context, req *HTTPRequest) (*HTTPRespon
 	}, nil
 }
 
-func (c wasmConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]EmitInstruction, error) {
+func (c *wasmConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]EmitInstruction, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	reply, err := c.client.HandleSocketEvent(ctx, &wasmpb.SocketEvent{
 		Namespace: ev.Namespace,
 		Event:     ev.Event,
@@ -166,7 +181,10 @@ func (c wasmConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]Emi
 	return emits, nil
 }
 
-func (c wasmConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) error {
+func (c *wasmConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	reply, err := c.client.HandlePluginMessage(ctx, &wasmpb.PluginMessage{
 		Source:  msg.Source,
 		Target:  msg.Target,

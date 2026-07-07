@@ -12,8 +12,8 @@ func main() {
 
 	opts, err := parseCLI(os.Args[1:], os.Stderr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "minimalpanel: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Run `minimalpanel -help` for usage.")
+		fmt.Fprintf(os.Stderr, "arupa: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run `arupa -help` for usage.")
 		os.Exit(2)
 	}
 	if opts.ShowHelp {

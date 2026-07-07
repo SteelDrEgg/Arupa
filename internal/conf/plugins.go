@@ -26,7 +26,7 @@ func (c Config) PluginParams(name string) map[string]string {
 // PluginRunAsUser returns the OS user a gRPC plugin should run as.
 //
 // Per-plugin policy under [Plugins.<name>] overrides [Plugins.default].
-// An empty result means the current minimalpanel process user.
+// An empty result means the current arupa process user.
 func (c Config) PluginRunAsUser(name string) string {
 	return c.PluginSystem.EffectivePlugin(name).RunAsUser
 }

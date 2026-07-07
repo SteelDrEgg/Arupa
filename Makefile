@@ -32,7 +32,7 @@ proto-wasm:
 ## build: build the host server binary
 build:
 	mkdir -p $(DIST_DIR)
-	go build -ldflags "$(LDFLAGS_VER)" -o $(DIST_DIR)/minimalpanel ./cmd
+	go build -ldflags "$(LDFLAGS_VER)" -o $(DIST_DIR)/arupa ./cmd
 
 ## run: run the host server
 run:

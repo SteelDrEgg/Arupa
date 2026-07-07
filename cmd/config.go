@@ -3,7 +3,7 @@ package main
 import (
 	"log/slog"
 
-	"minimalpanel/internal/conf"
+	"arupa/internal/conf"
 )
 
 func loadServerConfig(path string, logger *slog.Logger) conf.Config {

@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"minimalpanel/internal/conf"
-	"minimalpanel/internal/netx"
-	"minimalpanel/internal/plugin"
-	"minimalpanel/internal/web"
+	"arupa/internal/conf"
+	"arupa/internal/netx"
+	"arupa/internal/plugin"
+	"arupa/internal/web"
 )
 
 func runServer(cfg conf.Config, logger *slog.Logger) error {
@@ -59,7 +59,7 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	errCh := make(chan error, 1)
 
 	go func() {
-		logger.Info("minimalpanel listening", "addr", cfg.Listen)
+		logger.Info("arupa listening", "addr", cfg.Listen)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

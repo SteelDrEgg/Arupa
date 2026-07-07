@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"minimalpanel/internal/conf"
-	"minimalpanel/internal/netx"
+	"arupa/internal/conf"
+	"arupa/internal/netx"
 	"net/http"
 	"strings"
 

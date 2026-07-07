@@ -1,4 +1,4 @@
-<div align="center"><h1>MinimalPanel</h1></div>
+<div align="center"><h1>Arupa</h1></div>
 <p align="center">
 <img width="80%" src="doc/plugins.png" alt="Plugin page" />
 

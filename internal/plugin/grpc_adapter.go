@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	grpcpb "minimalpanel/pluginsdk/grpc/proto"
+	grpcpb "arupa/pluginsdk/grpc/proto"
 )
 
 // grpcConn adapts a gRPC plugin client to the backend-agnostic pluginConn.

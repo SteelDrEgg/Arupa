@@ -8,7 +8,7 @@ import (
 	"net"
 	"sync"
 
-	grpcpb "minimalpanel/pluginsdk/grpc/proto"
+	grpcpb "arupa/pluginsdk/grpc/proto"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

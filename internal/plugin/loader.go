@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"minimalpanel/internal/conf"
-	grpcpb "minimalpanel/pluginsdk/grpc/proto"
-	wasmpb "minimalpanel/pluginsdk/wasm/proto"
+	"arupa/internal/conf"
+	grpcpb "arupa/pluginsdk/grpc/proto"
+	wasmpb "arupa/pluginsdk/wasm/proto"
 
 	goplugin "github.com/SteelDrEgg/go-plugin"
 	"google.golang.org/grpc"
@@ -18,8 +18,8 @@ import (
 // handshake is shared with gRPC plugins. Plugins must use the same values.
 var handshake = goplugin.HandshakeConfig{
 	ProtocolVersion:  1,
-	MagicCookieKey:   "MINIMALPANEL_PLUGIN",
-	MagicCookieValue: "minimalpanel",
+	MagicCookieKey:   "ARUPA_PLUGIN",
+	MagicCookieValue: "arupa",
 }
 
 // defaultRegisterTimeout bounds the host control-plane wait for plugin
@@ -252,7 +252,7 @@ func (l *pluginLoader) connFor(pluginType string, client any) (pluginConn, error
 		if !ok {
 			return nil, fmt.Errorf("unexpected wasm plugin client type %T", client)
 		}
-		return wasmConn{client: pc}, nil
+		return newWASMConn(pc), nil
 	case "grpc":
 		pc, ok := client.(grpcpb.PluginClient)
 		if !ok {

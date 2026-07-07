@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"sync"
 
+	"arupa/internal/auth"
+	"arupa/internal/netx"
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"minimalpanel/internal/auth"
-	"minimalpanel/internal/netx"
 )
 
 // socketBridge wires plugin-declared Socket.IO namespaces and events into the

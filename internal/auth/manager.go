@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	CookieName     = "mp-auth"
+	CookieName     = "arupa-auth"
 	cookieLifespan = 24 * time.Hour
 )
 

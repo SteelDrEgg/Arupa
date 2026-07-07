@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"minimalpanel/internal/auth"
-	"minimalpanel/internal/conf"
-	"minimalpanel/internal/netx"
+	"arupa/internal/auth"
+	"arupa/internal/conf"
+	"arupa/internal/netx"
 )
 
 type pluginRouter struct {

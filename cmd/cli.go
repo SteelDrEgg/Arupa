@@ -54,7 +54,7 @@ func parseCLI(args []string, output io.Writer) (cliOptions, error) {
 }
 
 func flagSetForHelp(output io.Writer, opts *cliOptions) *flag.FlagSet {
-	fs := flag.NewFlagSet("minimalpanel", flag.ContinueOnError)
+	fs := flag.NewFlagSet("arupa", flag.ContinueOnError)
 	fs.SetOutput(output)
 	registerFlags(fs, opts)
 	return fs
@@ -71,8 +71,8 @@ func registerFlags(fs *flag.FlagSet, opts *cliOptions) {
 
 func writeUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  minimalpanel [flags]")
-	fmt.Fprintln(w, "  minimalpanel -user <name> -password <password> [flags]")
+	fmt.Fprintln(w, "  arupa [flags]")
+	fmt.Fprintln(w, "  arupa -user <name> -password <password> [flags]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
 	fs.PrintDefaults()

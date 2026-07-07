@@ -1,4 +1,4 @@
-// Package plugin implements the host side of the minimalpanel plugin system.
+// Package plugin implements the host side of the arupa plugin system.
 //
 // It wraps github.com/SteelDrEgg/go-plugin to load WASM and gRPC plugins,
 // exposes a shared host API (KV, Socket.IO emit, logging) to them, and bridges
