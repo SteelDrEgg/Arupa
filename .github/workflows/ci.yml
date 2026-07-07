@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/release.yml"
+      - "Dockerfile"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
+      - "proto/**"
+      - "cmd/**"
+      - "internal/**"
   pull_request:
     branches:
       - main
