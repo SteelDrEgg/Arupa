@@ -23,7 +23,7 @@ func main() {
 		return
 	}
 	if opts.ShowVersion {
-		fmt.Fprintf(os.Stdout, "Kernel %s\n", version)
+		fmt.Fprintf(os.Stdout, "Arupa Kernel %s\n", version)
 		return
 	}
 
