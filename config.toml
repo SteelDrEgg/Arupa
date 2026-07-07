@@ -12,3 +12,13 @@ PluginTempDir = "tmp"
   [Plugins.default]
     Restart = "no"
     RunAsUser = ""
+
+  # Coreplugins
+  [Plugins.web-assets]
+    Restart = "always"
+  [Plugins.login]
+    Restart = "always"
+  [Plugins.navigator]
+    Restart = "always"
+  [Plugins.plugin-manager]
+    Restart = "always"
