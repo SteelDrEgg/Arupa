@@ -30,7 +30,7 @@ proto-wasm:
 		./proto/panel.proto
 
 ## build: build the host server binary
-build:
+build: proto
 	mkdir -p $(DIST_DIR)
 	go build -ldflags "$(LDFLAGS_VER)" -o $(DIST_DIR)/arupa ./cmd
 
