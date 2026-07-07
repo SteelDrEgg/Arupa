@@ -72,6 +72,12 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Install proto tools
+        run: make tools
+
       - name: Build
         run: make build VERSION=${{ github.ref_name }} DIST_DIR=dist/${{ matrix.goos }}-${{ matrix.goarch }}
         env:

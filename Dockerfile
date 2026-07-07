@@ -4,13 +4,15 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 WORKDIR /src
 
-RUN apk add --no-cache ca-certificates make
+RUN apk add --no-cache ca-certificates make protobuf
 
 COPY . .
 
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
+
+RUN make tools
 
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     make build VERSION=$VERSION DIST_DIR=/out
