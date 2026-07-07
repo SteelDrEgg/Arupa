@@ -155,7 +155,7 @@ func (router *pluginRouter) matchPluginRoute(method, path string) (HTTPRoute, st
 		if binding == nil || binding.plugin == nil || binding.plugin.conn == nil {
 			continue
 		}
-		if !pathMatchesPattern(path, key.pattern) {
+		if !pathMatchesRoutePattern(path, key.pattern) {
 			continue
 		}
 		if len(key.pattern) > len(bestPattern) {
@@ -260,6 +260,13 @@ func pathMatchesPattern(path, pattern string) bool {
 		return strings.HasPrefix(path, pattern)
 	}
 	return path == pattern
+}
+
+func pathMatchesRoutePattern(path, pattern string) bool {
+	if pattern == "/" {
+		return path == "/"
+	}
+	return pathMatchesPattern(path, pattern)
 }
 
 func normalizeRouteMethod(method string) string {
