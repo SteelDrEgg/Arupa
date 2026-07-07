@@ -1,9 +1,9 @@
 package web
 
 import (
+	"arupa/internal/auth"
+	"arupa/internal/netx"
 	"encoding/json"
-	"minimalpanel/internal/auth"
-	"minimalpanel/internal/netx"
 	"net/http"
 )
 

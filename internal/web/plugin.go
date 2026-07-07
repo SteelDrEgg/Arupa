@@ -1,12 +1,12 @@
 package web
 
 import (
+	"arupa/internal/auth"
+	"arupa/internal/conf"
+	"arupa/internal/netx"
+	"arupa/internal/plugin"
 	"encoding/json"
 	"fmt"
-	"minimalpanel/internal/auth"
-	"minimalpanel/internal/conf"
-	"minimalpanel/internal/netx"
-	"minimalpanel/internal/plugin"
 	"net/http"
 	"os"
 	"sort"

@@ -1,8 +1,7 @@
 package conf
 
 type Config struct {
-	SSHConfigPath string
-	Listen        string
+	Listen string
 	Auth
 	PluginSystem
 	Pages map[string]string
@@ -29,7 +28,7 @@ type Plugin struct {
 	// Typical values: "always", "yes", "true", "on", "no", "false", "off".
 	Restart string `json:"restart"`
 	// RunAsUser controls the OS user used to start gRPC plugin processes.
-	// Empty means the plugin runs as the current minimalpanel process user.
+	// Empty means the plugin runs as the current arupa process user.
 	RunAsUser string `json:"run_as_user,omitempty"`
 	// Params are arbitrary string config values passed directly to the plugin
 	// at registration, from [Plugins.<name>.params].

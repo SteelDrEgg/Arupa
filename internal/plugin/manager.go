@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"minimalpanel/internal/conf"
-	"minimalpanel/internal/netx"
+	"arupa/internal/conf"
+	"arupa/internal/netx"
 )
 
 // Options configures a Manager.

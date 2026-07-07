@@ -1,7 +1,0 @@
-Name: login
-Version: 0.1.0
-Type: wasm
-ContractVersion: 1
-Command: $PLUGIN_ROOT/login.wasm
-DisplayName: Login Pages
-Category: core

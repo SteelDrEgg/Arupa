@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"minimalpanel/internal/auth"
-	"minimalpanel/internal/conf"
-	"minimalpanel/internal/netx"
+	"arupa/internal/auth"
+	"arupa/internal/conf"
+	"arupa/internal/netx"
 )
 
 // registerStatic wires a plugin-declared static directory or file into the

@@ -1,8 +1,8 @@
 package auth
 
 import (
+	"arupa/internal/conf"
 	"fmt"
-	"minimalpanel/internal/conf"
 
 	"golang.org/x/crypto/bcrypt"
 )

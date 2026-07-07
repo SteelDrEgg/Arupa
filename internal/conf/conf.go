@@ -2,6 +2,7 @@ package conf
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -19,9 +20,8 @@ var (
 
 func defaultConfig() Config {
 	return Config{
-		SSHConfigPath: "~/.ssh",
-		Listen:        ":8080",
-		Auth:          Auth{},
+		Listen: ":8080",
+		Auth:   Auth{},
 		PluginSystem: PluginSystem{
 			PluginDir:     "plugins",
 			PluginTempDir: "tmp",
@@ -35,14 +35,17 @@ func LoadConfig(path string) error {
 	Path = path
 	err := Update()
 	if err != nil {
-		if os.IsNotExist(err) {
-			f, err := os.OpenFile(path, os.O_CREATE, 0644)
+		if errors.Is(err, os.ErrNotExist) {
+			f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 			if err == nil {
 				defer f.Close()
+				mu.Lock()
+				Conf = defaultConfig()
+				mu.Unlock()
 				return nil
 			}
 		}
-		return fmt.Errorf("failed to load config")
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	return nil
 }
@@ -53,7 +56,9 @@ func Update() (err error) {
 	defer mu.Unlock()
 
 	if _, err = os.Stat(Path); os.IsNotExist(err) {
-		return fmt.Errorf("config file does not exist: %s", Path)
+		return fmt.Errorf("config file does not exist: %s: %w", Path, err)
+	} else if err != nil {
+		return fmt.Errorf("failed to stat config file %s: %w", Path, err)
 	}
 	next := defaultConfig()
 	_, err = toml.DecodeFile(Path, &next)
@@ -97,8 +102,7 @@ func Read() Config {
 
 	// Create a deep copy of the config
 	conf := Config{
-		SSHConfigPath: Conf.SSHConfigPath,
-		Listen:        Conf.Listen,
+		Listen: Conf.Listen,
 		Auth: Auth{
 			Users: make(map[string]string),
 		},
@@ -117,13 +121,6 @@ func Read() Config {
 	}
 
 	return conf
-}
-
-// GetSSHConfigPath returns the SSH config path in a thread-safe manner
-func GetSSHConfigPath() string {
-	mu.RLock()
-	defer mu.RUnlock()
-	return Conf.SSHConfigPath
 }
 
 // GetUsers returns a copy of the users map in a thread-safe manner

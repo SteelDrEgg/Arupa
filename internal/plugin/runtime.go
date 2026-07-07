@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"minimalpanel/internal/conf"
+	"arupa/internal/conf"
 )
 
 type pluginRuntimeOptions struct {
