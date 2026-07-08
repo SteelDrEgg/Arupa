@@ -113,6 +113,9 @@ Listen = ":8080"
 PluginDir = "plugins"
 PluginTempDir = "tmp"
 
+[Pages]
+  "401" = "/pages/login.html"
+
 [Users]
   admin = "<bcrypt-password-hash>"
 
@@ -139,6 +142,7 @@ Restart = "always"
 | `Listen` | HTTP listen address, e.g. `:8080`. |
 | `PluginDir` | Directory containing `.plg` plugin packages. |
 | `PluginTempDir` | Temporary directory used while loading plugins. |
+| `Pages` | Pages to redirect to with an error code |
 | `[Users]` | Login users mapped to bcrypt password hashes. Manage them with `arupa -user <name> -password <password>`. |
 | `[Plugins.<name>]` | Per-plugin settings such as `Restart` (`no` / `always`) and `RunAsUser`. |
 
