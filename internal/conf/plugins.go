@@ -120,8 +120,9 @@ func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
 // EffectivePlugin returns the merged runtime config for name.
 //
 // [Plugins.default] is used as a base. Per-plugin Restart and RunAsUser values
-// override the base when non-empty, and Params are merged with per-plugin keys
-// taking precedence.
+// override the base when non-empty, Allow overrides the default group list
+// when configured, and Params are merged with per-plugin keys taking
+// precedence.
 func (s PluginSystem) EffectivePlugin(name string) Plugin {
 	base := Plugin{}
 	if def, ok := s.Plugins[pluginsDefaultKey]; ok {
@@ -181,6 +182,9 @@ func mergePlugin(base, override Plugin) Plugin {
 	if strings.TrimSpace(override.RunAsUser) != "" {
 		base.RunAsUser = override.RunAsUser
 	}
+	if len(override.Allow) > 0 {
+		base.Allow = append([]string(nil), override.Allow...)
+	}
 	if len(override.Params) > 0 {
 		if base.Params == nil {
 			base.Params = map[string]string{}
@@ -196,6 +200,7 @@ func clonePlugin(p Plugin) Plugin {
 	out := Plugin{
 		Restart:   p.Restart,
 		RunAsUser: p.RunAsUser,
+		Allow:     append([]string(nil), p.Allow...),
 	}
 	if len(p.Params) > 0 {
 		out.Params = make(map[string]string, len(p.Params))

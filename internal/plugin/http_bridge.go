@@ -41,6 +41,7 @@ type staticMountBinding struct {
 	owner   string
 	mount   StaticMount
 	handler http.Handler
+	plugin  *loadedPlugin
 }
 
 func newPluginRouter() *pluginRouter {
@@ -65,10 +66,10 @@ type httpRouteKey struct {
 // asset without being shadowed by an HTTP route of the same length.
 func (router *pluginRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route, routePattern, routePlugin, routeLen, allowedMethods := router.matchPluginRoute(r.Method, r.URL.Path)
-	mount, staticHandler, staticLen := router.matchPluginStatic(r.URL.Path)
+	mount, staticHandler, staticPlugin, staticLen := router.matchPluginStatic(r.URL.Path)
 
 	if staticHandler != nil && staticLen >= routeLen {
-		router.handlePluginStatic(mount, staticHandler, w, r)
+		router.handlePluginStatic(mount, staticPlugin, staticHandler, w, r)
 		return
 	}
 	if routePlugin != nil {
@@ -199,15 +200,12 @@ func (router *pluginRouter) handlePluginRoute(pattern string, route HTTPRoute, l
 		writeMethodNotAllowed(w, []string{method})
 		return
 	}
-	if route.Protected {
-		if _, ok := auth.IsAuthenticated(r); !ok {
-			if page, ok := conf.GetPagePath(http.StatusUnauthorized); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
-				http.Redirect(w, r, page, http.StatusSeeOther)
-				return
-			}
-			_ = netx.WriteUnauthorized(w, "authentication required")
-			return
-		}
+	user := auth.UserFromRequest(r)
+	if writePluginAccessError(w, r, lp.accessPolicy().Check(user)) {
+		return
+	}
+	if writePluginAccessError(w, r, route.Access.Check(user)) {
+		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody+1))
@@ -228,6 +226,7 @@ func (router *pluginRouter) handlePluginRoute(pattern string, route HTTPRoute, l
 		Headers:      flattenHeaders(r.Header),
 		Body:         body,
 		RemoteAddr:   r.RemoteAddr,
+		User:         userOrNil(user),
 	}
 
 	ctx, cancel := lp.callContext(r.Context())
@@ -247,6 +246,23 @@ func (router *pluginRouter) handlePluginRoute(pattern string, route HTTPRoute, l
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(resp.Body)
+}
+
+func userOrNil(user User) *User {
+	if !user.Authenticated {
+		return nil
+	}
+	return &user
+}
+
+func writePluginAccessError(w http.ResponseWriter, r *http.Request, decision auth.AccessDecision) bool {
+	if decision == auth.AccessAuthenticationRequired {
+		if page, ok := conf.GetPagePath(http.StatusUnauthorized); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
+			http.Redirect(w, r, page, http.StatusSeeOther)
+			return true
+		}
+	}
+	return auth.WriteAccessError(w, decision)
 }
 
 // pathMatchesPattern implements the plugin dispatcher's small matching model:
@@ -303,9 +319,21 @@ func writeMethodNotAllowed(w http.ResponseWriter, allowedMethods []string) {
 func flattenHeaders(h http.Header) map[string]string {
 	out := make(map[string]string, len(h))
 	for k, v := range h {
+		if isSensitiveRequestHeader(k) {
+			continue
+		}
 		if len(v) > 0 {
 			out[k] = v[0]
 		}
 	}
 	return out
+}
+
+func isSensitiveRequestHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "authorization", "cookie", "proxy-authorization":
+		return true
+	default:
+		return false
+	}
 }

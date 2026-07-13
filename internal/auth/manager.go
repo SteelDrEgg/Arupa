@@ -143,6 +143,13 @@ func GetTokenFromHeader(r *http.Request) (string, bool) {
 
 // IsAuthenticated checks if the request has a valid session (cookie or header)
 func IsAuthenticated(r *http.Request) (string, bool) {
+	user := UserFromRequest(r)
+	return user.Username, user.Authenticated
+}
+
+// AuthenticateRequest validates the session token carried by r and resolves
+// the user's configured groups.
+func AuthenticateRequest(r *http.Request) User {
 	// Try cookie first
 	token, exists := GetTokenFromCookie(r)
 
@@ -150,10 +157,13 @@ func IsAuthenticated(r *http.Request) (string, bool) {
 	if !exists {
 		token, exists = GetTokenFromHeader(r)
 		if !exists {
-			return "", false
+			return User{}
 		}
 	}
 
 	username, valid := ValidateSession(token)
-	return username, valid
+	if !valid {
+		return User{}
+	}
+	return UserForUsername(username)
 }

@@ -110,24 +110,28 @@ func (c *wasmConn) Register(ctx context.Context, req RegisterRequest) (*Register
 	res := &RegisterResult{Name: reply.GetName(), Version: reply.GetVersion()}
 	for _, r := range reply.GetHttpRoutes() {
 		res.Routes = append(res.Routes, HTTPRoute{
-			Method:    r.GetMethod(),
-			Pattern:   r.GetPattern(),
-			Protected: r.GetProtected(),
+			Method:  r.GetMethod(),
+			Pattern: r.GetPattern(),
+			Access:  accessFromWASM(r.GetAccess()),
 		})
 	}
 	for _, s := range reply.GetStaticMounts() {
 		res.Static = append(res.Static, StaticMount{
 			Prefix:    s.GetPrefix(),
 			Directory: s.GetDirectory(),
-			Protected: s.GetProtected(),
+			Access:    accessFromWASM(s.GetAccess()),
 		})
 	}
 	for _, ns := range reply.GetSocketNamespaces() {
+		eventAccess := make(map[string]AccessPolicy, len(ns.GetEventAccess()))
+		for event, policy := range ns.GetEventAccess() {
+			eventAccess[event] = accessFromWASM(policy)
+		}
 		res.Namespaces = append(res.Namespaces, SocketNamespaceDecl{
-			Name:            ns.GetName(),
-			Events:          ns.GetEvents(),
-			Protected:       ns.GetProtected(),
-			ProtectedEvents: ns.GetProtectedEvents(),
+			Name:        ns.GetName(),
+			Events:      ns.GetEvents(),
+			Access:      accessFromWASM(ns.GetAccess()),
+			EventAccess: eventAccess,
 		})
 	}
 	return res, nil
@@ -145,6 +149,7 @@ func (c *wasmConn) HandleHTTP(ctx context.Context, req *HTTPRequest) (*HTTPRespo
 		Headers:      req.Headers,
 		Body:         req.Body,
 		RemoteAddr:   req.RemoteAddr,
+		User:         userToWASM(req.User),
 	})
 	if err != nil {
 		return nil, err
@@ -164,6 +169,7 @@ func (c *wasmConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]Em
 		Namespace: ev.Namespace,
 		Event:     ev.Event,
 		SocketId:  ev.SocketID,
+		User:      userToWASM(ev.User),
 		Payload:   ev.Payload,
 	})
 	if err != nil {

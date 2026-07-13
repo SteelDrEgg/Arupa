@@ -3,12 +3,20 @@ package conf
 type Config struct {
 	Listen string
 	Auth
+	Route RouteConfig
 	PluginSystem
 	Pages map[string]string
 }
 
 type Auth struct {
-	Users map[string]string
+	Users  map[string]string
+	Groups map[string][]string
+}
+
+// RouteConfig contains host-level access rules. Rules are matched before the
+// request reaches either a host handler or a plugin handler.
+type RouteConfig struct {
+	Allow map[string][]string
 }
 
 // PluginSystem holds plugin manager configuration and per-plugin policy.
@@ -30,6 +38,9 @@ type Plugin struct {
 	// RunAsUser controls the OS user used to start gRPC plugin processes.
 	// Empty means the plugin runs as the current arupa process user.
 	RunAsUser string `json:"run_as_user,omitempty"`
+	// Allow lists groups that may access the plugin as a whole. An empty list
+	// leaves the plugin open; route and event policies are declared by plugins.
+	Allow []string `json:"allow,omitempty"`
 	// Params are arbitrary string config values passed directly to the plugin
 	// at registration, from [Plugins.<name>.params].
 	Params map[string]string `json:"params,omitempty"`

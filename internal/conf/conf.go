@@ -104,7 +104,11 @@ func Read() Config {
 	conf := Config{
 		Listen: Conf.Listen,
 		Auth: Auth{
-			Users: make(map[string]string),
+			Users:  make(map[string]string),
+			Groups: make(map[string][]string, len(Conf.Auth.Groups)),
+		},
+		Route: RouteConfig{
+			Allow: cloneRouteAllow(Conf.Route.Allow),
 		},
 		PluginSystem: Conf.PluginSystem.Clone(),
 	}
@@ -112,6 +116,9 @@ func Read() Config {
 	// Copy the users map
 	for k, v := range Conf.Auth.Users {
 		conf.Auth.Users[k] = v
+	}
+	for group, users := range Conf.Auth.Groups {
+		conf.Auth.Groups[group] = append([]string(nil), users...)
 	}
 	if len(Conf.Pages) > 0 {
 		conf.Pages = make(map[string]string, len(Conf.Pages))
@@ -135,11 +142,40 @@ func GetUsers() map[string]string {
 	return users
 }
 
+// GetGroups returns a deep copy of configured group membership.
+func GetGroups() map[string][]string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return cloneGroups(Conf.Auth.Groups)
+}
+
 // GetPluginSystem returns the plugin-system config in a thread-safe manner.
 func GetPluginSystem() PluginSystem {
 	mu.RLock()
 	defer mu.RUnlock()
 	return Conf.PluginSystem.Clone()
+}
+
+func cloneGroups(groups map[string][]string) map[string][]string {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(groups))
+	for group, users := range groups {
+		out[group] = append([]string(nil), users...)
+	}
+	return out
+}
+
+func cloneRouteAllow(allow map[string][]string) map[string][]string {
+	if len(allow) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(allow))
+	for pattern, groups := range allow {
+		out[pattern] = append([]string(nil), groups...)
+	}
+	return out
 }
 
 // SetPluginPaths updates plugin package and temp directories and persists them.

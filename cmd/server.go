@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"arupa/internal/auth"
 	"arupa/internal/conf"
 	"arupa/internal/netx"
 	"arupa/internal/plugin"
@@ -55,7 +56,8 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		logger.Info("discovered plugin", logArgs...)
 	}
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: mux}
+	handler := auth.WithUser(auth.RouteAccess(cfg.Route.Allow, mux))
+	srv := &http.Server{Addr: cfg.Listen, Handler: handler}
 	errCh := make(chan error, 1)
 
 	go func() {
