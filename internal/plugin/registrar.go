@@ -37,7 +37,7 @@ func (r *pluginRegistrar) register(owner, pluginRoot string, reg *RegisterResult
 			r.log.Error("failed to register plugin static mount", "plugin", owner, "prefix", mount.Prefix, "dir", mount.Directory, "err", "router is not configured")
 			continue
 		}
-		if err := r.router.registerStatic(owner, pluginRoot, mount); err != nil {
+		if err := r.router.registerStatic(owner, pluginRoot, mount, lp); err != nil {
 			degraded = true
 			r.log.Error("failed to register plugin static mount", "plugin", owner, "prefix", mount.Prefix, "dir", mount.Directory, "err", err)
 		}

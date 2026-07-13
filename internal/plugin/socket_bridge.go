@@ -25,11 +25,10 @@ type socketBridge struct {
 }
 
 type socketOwner struct {
-	pluginName      string
-	plugin          *loadedPlugin
-	decl            SocketNamespaceDecl
-	events          map[string]struct{}
-	protectedEvents map[string]struct{}
+	pluginName string
+	plugin     *loadedPlugin
+	decl       SocketNamespaceDecl
+	events     map[string]struct{}
 }
 
 func newSocketBridge(server *netx.Socket, log *slog.Logger) *socketBridge {
@@ -85,23 +84,27 @@ func newSocketOwner(pluginName string, decl SocketNamespaceDecl, lp *loadedPlugi
 		events[event] = struct{}{}
 	}
 
-	protectedEvents := make(map[string]struct{}, len(decl.ProtectedEvents))
-	for _, event := range decl.ProtectedEvents {
-		protectedEvents[event] = struct{}{}
-	}
-
 	return socketOwner{
-		pluginName:      pluginName,
-		plugin:          lp,
-		decl:            cloneSocketNamespaceDecl(decl),
-		events:          events,
-		protectedEvents: protectedEvents,
+		pluginName: pluginName,
+		plugin:     lp,
+		decl:       cloneSocketNamespaceDecl(decl),
+		events:     events,
 	}
 }
 
 func cloneSocketNamespaceDecl(decl SocketNamespaceDecl) SocketNamespaceDecl {
 	decl.Events = append([]string(nil), decl.Events...)
-	decl.ProtectedEvents = append([]string(nil), decl.ProtectedEvents...)
+	if len(decl.Access.Groups) > 0 {
+		decl.Access.Groups = append([]string(nil), decl.Access.Groups...)
+	}
+	if len(decl.EventAccess) > 0 {
+		eventAccess := make(map[string]AccessPolicy, len(decl.EventAccess))
+		for event, policy := range decl.EventAccess {
+			policy.Groups = append([]string(nil), policy.Groups...)
+			eventAccess[event] = policy
+		}
+		decl.EventAccess = eventAccess
+	}
 	return decl
 }
 
@@ -126,15 +129,11 @@ func (b *socketBridge) authorizeNamespace(nsName string, client *socket.Socket) 
 	if !ok {
 		return socket.NewExtendedError("Unavailable", "namespace is not owned by a running plugin")
 	}
-	if !owner.decl.Protected {
-		return nil
+	user := auth.UserFromSocket(client)
+	if err := socketAccessError(owner.plugin.accessPolicy().Check(user)); err != nil {
+		return err
 	}
-
-	var authErr *socket.ExtendedError
-	auth.RequireAuthSocketIO(client, func(err *socket.ExtendedError) {
-		authErr = err
-	})
-	return authErr
+	return socketAccessError(owner.decl.Access.Check(user))
 }
 
 // unregisterPlugin releases all namespace ownership held by pluginName. The
@@ -158,14 +157,6 @@ func (b *socketBridge) unregisterPlugin(pluginName string) {
 	}
 }
 
-func isSocketAuthenticated(client *socket.Socket) bool {
-	allowed := false
-	auth.RequireAuthSocketIO(client, func(err *socket.ExtendedError) {
-		allowed = err == nil
-	})
-	return allowed
-}
-
 func (b *socketBridge) handleAny(nsName string, client *socket.Socket, args []any) {
 	event, data, ok := socketEventFromAnyArgs(args)
 	if !ok {
@@ -181,16 +172,87 @@ func (b *socketBridge) handleAny(nsName string, client *socket.Socket, args []an
 		b.log.Debug("ignore undeclared socket event", "namespace", nsName, "event", event, "plugin", owner.pluginName)
 		return
 	}
-	if owner.protectsEvent(event) && !isSocketAuthenticated(client) {
-		_ = client.Emit("error", map[string]any{
-			"code":    "UNAUTHORIZED",
-			"message": "authentication required",
-			"event":   event,
-		})
+	user := auth.UserFromSocket(client)
+	if decision := owner.plugin.accessPolicy().Check(user); decision != auth.AccessAllowed {
+		b.emitAccessError(client, event, decision)
+		return
+	}
+	if decision := owner.decl.Access.Check(user); decision != auth.AccessAllowed {
+		b.emitAccessError(client, event, decision)
+		return
+	}
+	if policy, protected := owner.eventAccess(event); protected {
+		if decision := policy.Check(user); decision != auth.AccessAllowed {
+			b.emitAccessError(client, event, decision)
+			return
+		}
+	}
+
+	b.handle(owner, nsName, event, client, user, data)
+}
+
+func (b *socketBridge) emitAccessError(client *socket.Socket, event string, decision auth.AccessDecision) {
+	code := "FORBIDDEN"
+	message := "access forbidden"
+	if decision == auth.AccessAuthenticationRequired {
+		code = "UNAUTHORIZED"
+		message = "authentication required"
+	}
+	if err := client.Emit("error", map[string]any{
+		"code":    code,
+		"message": message,
+		"event":   event,
+	}); err != nil {
+		b.log.Debug("failed to emit socket access error", "event", event, "err", err)
+	}
+}
+
+func socketAccessError(decision auth.AccessDecision) *socket.ExtendedError {
+	switch decision {
+	case auth.AccessAuthenticationRequired:
+		return socket.NewExtendedError("Unauthorized", "authentication required")
+	case auth.AccessForbidden:
+		return socket.NewExtendedError("Forbidden", "access forbidden")
+	default:
+		return nil
+	}
+}
+
+func (owner socketOwner) eventAccess(event string) (AccessPolicy, bool) {
+	policy, ok := owner.decl.EventAccess[event]
+	return policy, ok
+}
+
+func (owner socketOwner) handlesEvent(event string) bool {
+	_, ok := owner.events[event]
+	return ok
+}
+
+func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socket.Socket, user User, data []any) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		b.log.Error("marshal socket event payload", "namespace", ns, "event", event, "err", err)
 		return
 	}
 
-	b.handle(owner, nsName, event, client, data)
+	ctx, cancel := owner.plugin.eventContext()
+	defer cancel()
+	emits, err := owner.plugin.conn.HandleSocketEvent(ctx, &SocketEvent{
+		Namespace: ns,
+		Event:     event,
+		SocketID:  string(client.Id()),
+		User:      userOrNil(user),
+		Payload:   payload,
+	})
+	if err != nil {
+		b.log.Error("plugin socket handler failed", "namespace", ns, "event", event, "err", err)
+		return
+	}
+	for _, e := range emits {
+		if err := b.Emit(e); err != nil {
+			b.log.Error("apply plugin emit", "namespace", e.Namespace, "event", e.Event, "err", err)
+		}
+	}
 }
 
 func socketEventFromAnyArgs(args []any) (string, []any, bool) {
@@ -209,42 +271,6 @@ func (b *socketBridge) ownerForNamespace(ns string) (socketOwner, bool) {
 	owner := b.owners[ns]
 	b.mu.RUnlock()
 	return owner, owner.pluginName != "" && owner.plugin != nil && owner.plugin.conn != nil
-}
-
-func (owner socketOwner) handlesEvent(event string) bool {
-	_, ok := owner.events[event]
-	return ok
-}
-
-func (owner socketOwner) protectsEvent(event string) bool {
-	_, ok := owner.protectedEvents[event]
-	return ok
-}
-
-func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socket.Socket, data []any) {
-	payload, err := json.Marshal(data)
-	if err != nil {
-		b.log.Error("marshal socket event payload", "namespace", ns, "event", event, "err", err)
-		return
-	}
-
-	ctx, cancel := owner.plugin.eventContext()
-	defer cancel()
-	emits, err := owner.plugin.conn.HandleSocketEvent(ctx, &SocketEvent{
-		Namespace: ns,
-		Event:     event,
-		SocketID:  string(client.Id()),
-		Payload:   payload,
-	})
-	if err != nil {
-		b.log.Error("plugin socket handler failed", "namespace", ns, "event", event, "err", err)
-		return
-	}
-	for _, e := range emits {
-		if err := b.Emit(e); err != nil {
-			b.log.Error("apply plugin emit", "namespace", e.Namespace, "event", e.Event, "err", err)
-		}
-	}
 }
 
 // Emit implements the Emitter interface used by HostAPI.

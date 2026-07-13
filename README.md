@@ -119,6 +119,9 @@ PluginTempDir = "tmp"
 [Users]
   admin = "<bcrypt-password-hash>"
 
+[Groups]
+  administrators = ["admin"]
+
 [Plugins]
 [Plugins.default]
 Restart = "no"
@@ -144,7 +147,38 @@ Restart = "always"
 | `PluginTempDir` | Temporary directory used while loading plugins. |
 | `Pages` | Pages to redirect to with an error code |
 | `[Users]` | Login users mapped to bcrypt password hashes. Manage them with `arupa -user <name> -password <password>`. |
+| `[Groups]` | Group names mapped to usernames. A user may belong to multiple groups. |
+| `[Route.Allow]` | Top-level HTTP path rules. A matching non-empty group list requires membership in at least one group. The longest matching path rule wins. |
 | `[Plugins.<name>]` | Per-plugin settings such as `Restart` (`no` / `always`) and `RunAsUser`. |
+
+An optional `Allow` list under `[Plugins.<name>]` controls access to the plugin
+as a whole. Empty or omitted `Allow` leaves the plugin open:
+
+```toml
+[Plugins.example]
+  Allow = ["administrators"]
+```
+
+Plugins declare their own resource policies through the protocol's
+`AccessPolicy`. An empty policy is public; `RequireAuth` requires any logged-in
+user; and `Groups` requires membership in at least one listed group. The host
+passes the verified user's username and groups to HTTP and Socket.IO handlers.
+It never passes the session token to the plugin.
+
+Plugin Params may read a value from the host process environment. Use
+`env://NAME` for a required variable or `env://NAME?` for an optional variable:
+
+```toml
+[Plugins.example.Params]
+  endpoint = "https://example.test"
+  api_key = "env://EXAMPLE_API_KEY"
+  proxy = "env://HTTPS_PROXY?"
+```
+
+The required form prevents the plugin from starting when the variable is not
+set. The optional form starts the plugin and passes an empty string. Values are
+resolved once, before plugin registration; restart the plugin after changing
+the environment.
 
 ## Plugins
 

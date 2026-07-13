@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"arupa/internal/auth"
 	"arupa/internal/conf"
 	grpcpb "arupa/pluginsdk/grpc/proto"
 	wasmpb "arupa/pluginsdk/wasm/proto"
@@ -58,6 +60,8 @@ type loadedPlugin struct {
 	conn      pluginConn
 	record    *PluginRecord
 	grpcToken string
+	accessMu  sync.RWMutex
+	access    auth.AccessPolicy
 	// lifecycle is canceled when the host stops or replaces this loaded plugin.
 	lifecycle context.Context
 	cancel    context.CancelFunc
@@ -84,6 +88,13 @@ func newPluginLoader(opts pluginLoaderOptions) (*pluginLoader, error) {
 }
 
 func (l *pluginLoader) load(scanned DiscoveredPlugin, cfg conf.Plugin) (*pluginLoadResult, error) {
+	params, err := cfg.ResolveParams(os.LookupEnv)
+	if err != nil {
+		return nil, fmt.Errorf("resolve params for plugin %q: %w", scanned.Name, err)
+	}
+	cfg = cfg.Clone()
+	cfg.Params = params
+
 	loader := l.inner
 	runAsUser := ""
 	if scanned.Type == "grpc" {
@@ -168,6 +179,7 @@ func (l *pluginLoader) load(scanned DiscoveredPlugin, cfg conf.Plugin) (*pluginL
 		conn:      conn,
 		record:    record,
 		grpcToken: grpcToken,
+		access:    auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
 		lifecycle: lifecycle,
 		cancel:    cancelLifecycle,
 	}
@@ -177,6 +189,20 @@ func (l *pluginLoader) load(scanned DiscoveredPlugin, cfg conf.Plugin) (*pluginL
 		rootPath:     handle.RootPath(),
 		runAsUser:    runAsUser,
 	}, nil
+}
+
+func (lp *loadedPlugin) accessPolicy() auth.AccessPolicy {
+	lp.accessMu.RLock()
+	defer lp.accessMu.RUnlock()
+	return auth.AccessPolicy{
+		Groups: append([]string(nil), lp.access.Groups...),
+	}
+}
+
+func (lp *loadedPlugin) updateAccessGroups(groups []string) {
+	lp.accessMu.Lock()
+	lp.access.Groups = append([]string(nil), groups...)
+	lp.accessMu.Unlock()
 }
 
 type unfaithfulPluginError struct {

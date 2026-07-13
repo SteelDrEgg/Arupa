@@ -8,14 +8,12 @@ import (
 	"strings"
 
 	"arupa/internal/auth"
-	"arupa/internal/conf"
-	"arupa/internal/netx"
 )
 
 // registerStatic wires a plugin-declared static directory or file into the
 // plugin dispatch table. Directory mounts are normalized to subtree patterns
 // ending in "/", while file mounts remain exact patterns.
-func (router *pluginRouter) registerStatic(owner, pluginRoot string, mount StaticMount) error {
+func (router *pluginRouter) registerStatic(owner, pluginRoot string, mount StaticMount, lp *loadedPlugin) error {
 	prefix := strings.TrimSpace(mount.Prefix)
 	if prefix == "" {
 		return fmt.Errorf("static mount prefix is required")
@@ -74,11 +72,12 @@ func (router *pluginRouter) registerStatic(owner, pluginRoot string, mount Stati
 		}
 		binding.owner = owner
 		binding.mount = mount
+		binding.plugin = lp
 		binding.handler = handler
 		return nil
 	}
 
-	router.static[pattern] = &staticMountBinding{owner: owner, mount: mount, handler: handler}
+	router.static[pattern] = &staticMountBinding{owner: owner, mount: mount, handler: handler, plugin: lp}
 	return nil
 }
 
@@ -104,7 +103,7 @@ func (router *pluginRouter) unregisterStatic(owner string) {
 // matchPluginStatic returns the longest static mount pattern that matches path.
 // The returned handler already knows whether it should serve a file or strip a
 // directory prefix.
-func (router *pluginRouter) matchPluginStatic(path string) (StaticMount, http.Handler, int) {
+func (router *pluginRouter) matchPluginStatic(path string) (StaticMount, http.Handler, *loadedPlugin, int) {
 	router.staticMu.RLock()
 	defer router.staticMu.RUnlock()
 
@@ -123,23 +122,20 @@ func (router *pluginRouter) matchPluginStatic(path string) (StaticMount, http.Ha
 		}
 	}
 	if best == nil {
-		return StaticMount{}, nil, -1
+		return StaticMount{}, nil, nil, -1
 	}
-	return best.mount, best.handler, len(bestPattern)
+	return best.mount, best.handler, best.plugin, len(bestPattern)
 }
 
 // handlePluginStatic applies mount-level auth and delegates file serving to the
 // prepared static handler.
-func (router *pluginRouter) handlePluginStatic(mount StaticMount, handler http.Handler, w http.ResponseWriter, r *http.Request) {
-	if mount.Protected {
-		if _, ok := auth.IsAuthenticated(r); !ok {
-			if page, ok := conf.GetPagePath(http.StatusUnauthorized); ok && netx.WantsHTMLPage(r) && !netx.RequestPathMatches(r, page) {
-				http.Redirect(w, r, page, http.StatusSeeOther)
-				return
-			}
-			_ = netx.WriteUnauthorized(w, "authentication required")
-			return
-		}
+func (router *pluginRouter) handlePluginStatic(mount StaticMount, lp *loadedPlugin, handler http.Handler, w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromRequest(r)
+	if lp != nil && writePluginAccessError(w, r, lp.accessPolicy().Check(user)) {
+		return
+	}
+	if writePluginAccessError(w, r, mount.Access.Check(user)) {
+		return
 	}
 	handler.ServeHTTP(w, r)
 }

@@ -4,11 +4,24 @@ package panel.v1;
 
 option go_package = "arupa/pluginsdk/proto";
 
+// ===== common request context and access =====
+message User {
+  string username = 1;
+  repeated string groups = 2;
+}
+
+message AccessPolicy {
+  // Require any authenticated user when groups is empty.
+  bool require_auth = 1;
+  // A non-empty list requires membership in at least one group.
+  repeated string groups = 2;
+}
+
 // ===== HTTP =====
 message HTTPRoute {
   string method = 1;  // GET/POST/...; empty = any method
   string pattern = 2; // e.g. "/hello", "/api/foo/"
-  bool protected = 3; // requires host authentication when true
+  AccessPolicy access = 3;
 }
 
 message HTTPRequest {
@@ -19,6 +32,7 @@ message HTTPRequest {
   map<string, string> headers = 5;
   bytes body = 6;
   string remote_addr = 7;
+  User user = 8;
 }
 
 message HTTPResponse {
@@ -31,15 +45,15 @@ message HTTPResponse {
 message StaticMount {
   string prefix = 1;    // URL path prefix, e.g. "/assets/"
   string directory = 2; // host directory path to serve
-  bool protected = 3;   // requires host authentication when true
+  AccessPolicy access = 3;
 }
 
 // ===== socket.io =====
 message SocketNamespace {
   string name = 1;            // e.g. "/hello"
   repeated string events = 2; // events the plugin handles
-  bool protected = 3;         // requires host authentication when true
-  repeated string protected_events = 4; // event-level auth override
+  AccessPolicy access = 3;
+  map<string, AccessPolicy> event_access = 4; // optional event-specific policies
 }
 
 message SocketEvent {
@@ -47,6 +61,7 @@ message SocketEvent {
   string event = 2;
   string socket_id = 3;
   bytes payload = 4; // JSON-encoded event arguments
+  User user = 5;
 }
 
 message EmitInstruction {

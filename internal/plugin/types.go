@@ -9,29 +9,36 @@
 // backend-specific generated protobuf types.
 package plugin
 
-import "context"
+import (
+	"context"
+
+	"arupa/internal/auth"
+)
+
+type User = auth.User
+type AccessPolicy = auth.AccessPolicy
 
 // HTTPRoute is a single HTTP route a plugin handles.
 type HTTPRoute struct {
-	Method    string `json:"method"`    // GET/POST/...; empty means any method
-	Pattern   string `json:"pattern"`   // URL path pattern
-	Protected bool   `json:"protected"` // requires host authentication when true
+	Method  string       `json:"method"`  // GET/POST/...; empty means any method
+	Pattern string       `json:"pattern"` // URL path pattern
+	Access  AccessPolicy `json:"access"`
 }
 
 // StaticMount declares a URL prefix to host static files from a directory.
 type StaticMount struct {
-	Prefix    string `json:"prefix"`    // URL path; use trailing '/' for directories, exact path for files
-	Directory string `json:"directory"` // host path; can be a directory or a single file
-	Protected bool   `json:"protected"` // requires host authentication when true
+	Prefix    string       `json:"prefix"`    // URL path; use trailing '/' for directories, exact path for files
+	Directory string       `json:"directory"` // host path; can be a directory or a single file
+	Access    AccessPolicy `json:"access"`
 }
 
 // SocketNamespaceDecl declares a Socket.IO namespace and the events a plugin
 // handles within it.
 type SocketNamespaceDecl struct {
-	Name            string   `json:"name"`
-	Events          []string `json:"events"`
-	Protected       bool     `json:"protected"`        // requires host authentication when true
-	ProtectedEvents []string `json:"protected_events"` // requires auth for matching events
+	Name        string                  `json:"name"`
+	Events      []string                `json:"events"`
+	Access      AccessPolicy            `json:"access"`
+	EventAccess map[string]AccessPolicy `json:"event_access,omitempty"`
 }
 
 // RegisterResult is the backend-agnostic result of registering a plugin.
@@ -60,6 +67,7 @@ type HTTPRequest struct {
 	Headers      map[string]string
 	Body         []byte
 	RemoteAddr   string
+	User         *User
 }
 
 // HTTPResponse is a plugin's reply to an HTTPRequest.
@@ -74,6 +82,7 @@ type SocketEvent struct {
 	Namespace string
 	Event     string
 	SocketID  string
+	User      *User
 	Payload   []byte // JSON-encoded array of event arguments
 }
 

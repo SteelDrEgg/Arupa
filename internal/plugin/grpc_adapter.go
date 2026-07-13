@@ -25,24 +25,28 @@ func (c grpcConn) Register(ctx context.Context, req RegisterRequest) (*RegisterR
 	res := &RegisterResult{Name: reply.GetName(), Version: reply.GetVersion()}
 	for _, r := range reply.GetHttpRoutes() {
 		res.Routes = append(res.Routes, HTTPRoute{
-			Method:    r.GetMethod(),
-			Pattern:   r.GetPattern(),
-			Protected: r.GetProtected(),
+			Method:  r.GetMethod(),
+			Pattern: r.GetPattern(),
+			Access:  accessFromGRPC(r.GetAccess()),
 		})
 	}
 	for _, s := range reply.GetStaticMounts() {
 		res.Static = append(res.Static, StaticMount{
 			Prefix:    s.GetPrefix(),
 			Directory: s.GetDirectory(),
-			Protected: s.GetProtected(),
+			Access:    accessFromGRPC(s.GetAccess()),
 		})
 	}
 	for _, ns := range reply.GetSocketNamespaces() {
+		eventAccess := make(map[string]AccessPolicy, len(ns.GetEventAccess()))
+		for event, policy := range ns.GetEventAccess() {
+			eventAccess[event] = accessFromGRPC(policy)
+		}
 		res.Namespaces = append(res.Namespaces, SocketNamespaceDecl{
-			Name:            ns.GetName(),
-			Events:          ns.GetEvents(),
-			Protected:       ns.GetProtected(),
-			ProtectedEvents: ns.GetProtectedEvents(),
+			Name:        ns.GetName(),
+			Events:      ns.GetEvents(),
+			Access:      accessFromGRPC(ns.GetAccess()),
+			EventAccess: eventAccess,
 		})
 	}
 	return res, nil
@@ -57,6 +61,7 @@ func (c grpcConn) HandleHTTP(ctx context.Context, req *HTTPRequest) (*HTTPRespon
 		Headers:      req.Headers,
 		Body:         req.Body,
 		RemoteAddr:   req.RemoteAddr,
+		User:         userToGRPC(req.User),
 	})
 	if err != nil {
 		return nil, err
@@ -73,6 +78,7 @@ func (c grpcConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]Emi
 		Namespace: ev.Namespace,
 		Event:     ev.Event,
 		SocketId:  ev.SocketID,
+		User:      userToGRPC(ev.User),
 		Payload:   ev.Payload,
 	})
 	if err != nil {
