@@ -110,6 +110,9 @@ func (r *pluginRuntime) UpdateConfig(cfg conf.PluginSystem) {
 	r.config = cfg
 	for name, entry := range r.plugins {
 		entry.config = cfg.EffectivePlugin(name)
+		if entry.loaded != nil {
+			entry.loaded.updateAccessGroups(entry.config.Allow)
+		}
 	}
 	r.mu.Unlock()
 }

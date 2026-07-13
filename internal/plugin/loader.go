@@ -199,6 +199,12 @@ func (lp *loadedPlugin) accessPolicy() auth.AccessPolicy {
 	}
 }
 
+func (lp *loadedPlugin) updateAccessGroups(groups []string) {
+	lp.accessMu.Lock()
+	lp.access.Groups = append([]string(nil), groups...)
+	lp.accessMu.Unlock()
+}
+
 type unfaithfulPluginError struct {
 	reason string
 }

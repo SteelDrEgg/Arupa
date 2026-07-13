@@ -38,6 +38,15 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	defer pm.Close()
 	web.StartPlugin(mux, pm)
 
+	reloadConfig := func() error {
+		if err := conf.Update(); err != nil {
+			return err
+		}
+		pm.UpdateConfig(conf.GetPluginSystem())
+		return nil
+	}
+	web.StartKernel(mux, version, reloadConfig)
+
 	if err := pm.LoadConfigured(); err != nil {
 		logger.Error("failed to start configured plugins", "err", err)
 	}
@@ -56,7 +65,7 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		logger.Info("discovered plugin", logArgs...)
 	}
 
-	handler := auth.WithUser(auth.RouteAccess(cfg.Route.Allow, mux))
+	handler := auth.WithUser(auth.RouteAccess(mux))
 	srv := &http.Server{Addr: cfg.Listen, Handler: handler}
 	errCh := make(chan error, 1)
 
@@ -68,12 +77,24 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	}()
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(stop)
 
-	select {
-	case <-stop:
-	case err := <-errCh:
-		return err
+	for {
+		select {
+		case sig := <-stop:
+			if sig == syscall.SIGHUP {
+				if err := reloadConfig(); err != nil {
+					logger.Error("failed to reload configuration", "err", err)
+				} else {
+					logger.Info("configuration reloaded")
+				}
+				continue
+			}
+		case err := <-errCh:
+			return err
+		}
+		break
 	}
 
 	logger.Info("shutting down")

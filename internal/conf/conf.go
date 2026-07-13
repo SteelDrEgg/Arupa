@@ -156,6 +156,13 @@ func GetPluginSystem() PluginSystem {
 	return Conf.PluginSystem.Clone()
 }
 
+// GetRouteAllow returns a deep copy of the current host-level route rules.
+func GetRouteAllow() map[string][]string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return cloneRouteAllow(Conf.Route.Allow)
+}
+
 func cloneGroups(groups map[string][]string) map[string][]string {
 	if len(groups) == 0 {
 		return nil
