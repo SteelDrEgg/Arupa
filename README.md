@@ -142,6 +142,21 @@ Restart = "always"
 | `[Users]` | Login users mapped to bcrypt password hashes. Manage them with `arupa -user <name> -password <password>`. |
 | `[Plugins.<name>]` | Per-plugin settings such as `Restart` (`no` / `always`) and `RunAsUser`. |
 
+Plugin Params may read a value from the host process environment. Use
+`env://NAME` for a required variable or `env://NAME?` for an optional variable:
+
+```toml
+[Plugins.example.Params]
+  endpoint = "https://example.test"
+  api_key = "env://EXAMPLE_API_KEY"
+  proxy = "env://HTTPS_PROXY?"
+```
+
+The required form prevents the plugin from starting when the variable is not
+set. The optional form starts the plugin and passes an empty string. Values are
+resolved once, before plugin registration; restart the plugin after changing
+the environment.
+
 ## Plugins
 
 Arupa's kernel does almost nothing on its own — the panel's features all come from plugins. A plugin is a `.plg` package placed in `PluginDir`; the kernel loads it on startup and (re)starts it according to its `Restart` policy.

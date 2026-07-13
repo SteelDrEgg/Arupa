@@ -84,6 +84,13 @@ func newPluginLoader(opts pluginLoaderOptions) (*pluginLoader, error) {
 }
 
 func (l *pluginLoader) load(scanned DiscoveredPlugin, cfg conf.Plugin) (*pluginLoadResult, error) {
+	params, err := cfg.ResolveParams(os.LookupEnv)
+	if err != nil {
+		return nil, fmt.Errorf("resolve params for plugin %q: %w", scanned.Name, err)
+	}
+	cfg = cfg.Clone()
+	cfg.Params = params
+
 	loader := l.inner
 	runAsUser := ""
 	if scanned.Type == "grpc" {
