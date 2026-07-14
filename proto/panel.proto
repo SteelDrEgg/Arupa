@@ -133,7 +133,10 @@ message PluginMessage {
   bytes payload = 4;
 }
 
-message PluginMessageReply { string error = 1; }
+message PluginMessageReply {
+  string error = 1;
+  string message = 2;
+}
 
 message LogRequest {
   string level = 1;

@@ -58,15 +58,15 @@ func (h *HostAPI) Emit(instr EmitInstruction) error {
 
 // PluginMessage sends msg to another plugin, replacing Source with the
 // authenticated caller's registered plugin name.
-func (h *HostAPI) PluginMessage(ctx context.Context, source string, msg PluginMessage) error {
+func (h *HostAPI) PluginMessage(ctx context.Context, source string, msg PluginMessage) (string, error) {
 	if source == "" {
-		return fmt.Errorf("plugin message source is not authenticated")
+		return "", fmt.Errorf("plugin message source is not authenticated")
 	}
 	if msg.Target == "" {
-		return fmt.Errorf("plugin message target is required")
+		return "", fmt.Errorf("plugin message target is required")
 	}
 	if h.dispatcher == nil {
-		return fmt.Errorf("plugin message dispatcher not configured")
+		return "", fmt.Errorf("plugin message dispatcher not configured")
 	}
 	msg.Source = source
 	return h.dispatcher.DispatchPluginMessage(ctx, msg)

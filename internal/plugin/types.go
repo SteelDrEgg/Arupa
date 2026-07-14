@@ -115,7 +115,7 @@ type pluginConn interface {
 	Register(ctx context.Context, req RegisterRequest) (*RegisterResult, error)
 	HandleHTTP(ctx context.Context, req *HTTPRequest) (*HTTPResponse, error)
 	HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]EmitInstruction, error)
-	HandlePluginMessage(ctx context.Context, msg *PluginMessage) error
+	HandlePluginMessage(ctx context.Context, msg *PluginMessage) (string, error)
 }
 
 // Emitter sends Socket.IO emits requested by plugins.
@@ -125,7 +125,7 @@ type Emitter interface {
 
 // PluginMessageDispatcher delivers trusted plugin messages to their target.
 type PluginMessageDispatcher interface {
-	DispatchPluginMessage(ctx context.Context, msg PluginMessage) error
+	DispatchPluginMessage(ctx context.Context, msg PluginMessage) (string, error)
 }
 
 // ParamsPatcher persists caller-scoped plugin Params updates.

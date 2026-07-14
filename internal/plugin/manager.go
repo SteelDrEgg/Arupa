@@ -132,7 +132,7 @@ func (m *Manager) UpdateConfig(cfg conf.PluginSystem) {
 
 // DispatchPluginMessage delivers a host-authenticated plugin message to the
 // target plugin named in msg.Target.
-func (m *Manager) DispatchPluginMessage(ctx context.Context, msg PluginMessage) error {
+func (m *Manager) DispatchPluginMessage(ctx context.Context, msg PluginMessage) (string, error) {
 	return m.runtime.DispatchPluginMessage(ctx, msg)
 }
 

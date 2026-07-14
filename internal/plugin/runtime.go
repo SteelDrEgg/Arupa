@@ -117,7 +117,7 @@ func (r *pluginRuntime) UpdateConfig(cfg conf.PluginSystem) {
 	r.mu.Unlock()
 }
 
-func (r *pluginRuntime) DispatchPluginMessage(ctx context.Context, msg PluginMessage) error {
+func (r *pluginRuntime) DispatchPluginMessage(ctx context.Context, msg PluginMessage) (string, error) {
 	r.mu.RLock()
 	entry, ok := r.plugins[msg.Target]
 	var lp *loadedPlugin
@@ -126,7 +126,7 @@ func (r *pluginRuntime) DispatchPluginMessage(ctx context.Context, msg PluginMes
 	}
 	r.mu.RUnlock()
 	if lp == nil {
-		return fmt.Errorf("target plugin %q is not running", msg.Target)
+		return "", fmt.Errorf("target plugin %q is not running", msg.Target)
 	}
 	ctx, cancel := lp.callContext(ctx)
 	defer cancel()

@@ -67,14 +67,15 @@ func (w wasmHostFns) Emit(_ context.Context, req *wasmpb.EmitInstruction) (*wasm
 
 func (w wasmHostFns) SendPluginMessage(ctx context.Context, req *wasmpb.PluginMessage) (*wasmpb.PluginMessageReply, error) {
 	var errStr string
-	if err := w.api.PluginMessage(ctx, w.source, PluginMessage{
+	message, err := w.api.PluginMessage(ctx, w.source, PluginMessage{
 		Target:  req.GetTarget(),
 		Topic:   req.GetTopic(),
 		Payload: req.GetPayload(),
-	}); err != nil {
+	})
+	if err != nil {
 		errStr = err.Error()
 	}
-	return &wasmpb.PluginMessageReply{Error: errStr}, nil
+	return &wasmpb.PluginMessageReply{Error: errStr, Message: message}, nil
 }
 
 func (w wasmHostFns) Log(_ context.Context, req *wasmpb.LogRequest) (*wasmpb.LogReply, error) {
@@ -187,7 +188,7 @@ func (c *wasmConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]Em
 	return emits, nil
 }
 
-func (c *wasmConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) error {
+func (c *wasmConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -198,10 +199,10 @@ func (c *wasmConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) 
 		Payload: msg.Payload,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if reply.GetError() != "" {
-		return fmt.Errorf("plugin message reply: %s", reply.GetError())
+		return "", fmt.Errorf("plugin message reply: %s", reply.GetError())
 	}
-	return nil
+	return reply.GetMessage(), nil
 }
