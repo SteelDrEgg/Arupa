@@ -96,7 +96,7 @@ func (c grpcConn) HandleSocketEvent(ctx context.Context, ev *SocketEvent) ([]Emi
 	return emits, nil
 }
 
-func (c grpcConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) error {
+func (c grpcConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) (string, error) {
 	reply, err := c.client.HandlePluginMessage(ctx, &grpcpb.PluginMessage{
 		Source:  msg.Source,
 		Target:  msg.Target,
@@ -104,10 +104,10 @@ func (c grpcConn) HandlePluginMessage(ctx context.Context, msg *PluginMessage) e
 		Payload: msg.Payload,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if reply.GetError() != "" {
-		return fmt.Errorf("plugin message reply: %s", reply.GetError())
+		return "", fmt.Errorf("plugin message reply: %s", reply.GetError())
 	}
-	return nil
+	return reply.GetMessage(), nil
 }

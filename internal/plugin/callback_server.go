@@ -162,14 +162,15 @@ func (s *grpcHostServer) Emit(_ context.Context, req *grpcpb.EmitInstruction) (*
 func (s *grpcHostServer) SendPluginMessage(ctx context.Context, req *grpcpb.PluginMessage) (*grpcpb.PluginMessageReply, error) {
 	source, _ := ctx.Value(grpcPluginSourceKey{}).(string)
 	var errStr string
-	if err := s.api.PluginMessage(ctx, source, PluginMessage{
+	message, err := s.api.PluginMessage(ctx, source, PluginMessage{
 		Target:  req.GetTarget(),
 		Topic:   req.GetTopic(),
 		Payload: req.GetPayload(),
-	}); err != nil {
+	})
+	if err != nil {
 		errStr = err.Error()
 	}
-	return &grpcpb.PluginMessageReply{Error: errStr}, nil
+	return &grpcpb.PluginMessageReply{Error: errStr, Message: message}, nil
 }
 
 func (s *grpcHostServer) Log(_ context.Context, req *grpcpb.LogRequest) (*grpcpb.LogReply, error) {
