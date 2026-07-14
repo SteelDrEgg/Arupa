@@ -53,7 +53,22 @@ func (router *pluginRouter) registerStatic(owner, pluginRoot string, mount Stati
 		}
 		filePath := dir
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filePath)
+			file, err := os.Open(filePath)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer file.Close()
+
+			info, err := file.Stat()
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+
+			// ServeContent provides the normal static-file features without
+			// ServeFile's automatic /index.html -> / redirect.
+			http.ServeContent(w, r, filepath.Base(filePath), info.ModTime(), file)
 		})
 	}
 
