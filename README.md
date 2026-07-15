@@ -148,7 +148,7 @@ Restart = "always"
 | `Pages` | Pages to redirect to with an error code |
 | `[Users]` | Login users mapped to bcrypt password hashes. Manage them with `arupa -user <name> -password <password>`. |
 | `[Groups]` | Group names mapped to usernames. A user may belong to multiple groups. |
-| `[Route.Allow]` | Top-level HTTP path rules. A matching non-empty group list requires membership in at least one group. The longest matching path rule wins. |
+| `[Route.Allow]` | Top-level HTTP path rules. A matching non-empty group list requires membership in at least one group. Rules are exact unless they end in `/`, which matches a subtree; the longest matching path rule wins. `/*` is unsupported. |
 | `[Plugins.<name>]` | Per-plugin settings such as `Restart` (`no` / `always`) and `RunAsUser`. |
 
 An optional `Allow` list under `[Plugins.<name>]` controls access to the plugin

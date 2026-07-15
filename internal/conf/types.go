@@ -14,7 +14,8 @@ type Auth struct {
 }
 
 // RouteConfig contains host-level access rules. Rules are matched before the
-// request reaches either a host handler or a plugin handler.
+// request reaches either a host handler or a plugin handler. Patterns are
+// exact unless they end in "/", which selects a subtree; "/*" is unsupported.
 type RouteConfig struct {
 	Allow map[string][]string
 }

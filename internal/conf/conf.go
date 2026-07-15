@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"arupa/internal/netx"
+
 	"github.com/BurntSushi/toml"
 	"github.com/google/renameio"
 )
@@ -65,6 +67,9 @@ func Update() (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to update global config %w", err)
 	}
+	if err := validateRouteAllow(next.Route.Allow); err != nil {
+		return err
+	}
 	Conf = next
 	return nil
 }
@@ -73,6 +78,9 @@ func Update() (err error) {
 func Write(conf Config) (err error) {
 	mu.Lock()
 	defer mu.Unlock()
+	if err := validateRouteAllow(conf.Route.Allow); err != nil {
+		return err
+	}
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(conf); err != nil {
@@ -92,6 +100,15 @@ func Write(conf Config) (err error) {
 
 	// Update global config after successful write
 	Conf = conf
+	return nil
+}
+
+func validateRouteAllow(allow map[string][]string) error {
+	for pattern := range allow {
+		if err := netx.ValidatePathPattern(pattern); err != nil {
+			return fmt.Errorf("invalid Route.Allow pattern: %w", err)
+		}
+	}
 	return nil
 }
 

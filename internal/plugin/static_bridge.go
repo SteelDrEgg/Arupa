@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"arupa/internal/auth"
+	"arupa/internal/netx"
 )
 
 // registerStatic wires a plugin-declared static directory or file into the
@@ -15,11 +16,8 @@ import (
 // ending in "/", while file mounts remain exact patterns.
 func (router *pluginRouter) registerStatic(owner, pluginRoot string, mount StaticMount, lp *loadedPlugin) error {
 	prefix := strings.TrimSpace(mount.Prefix)
-	if prefix == "" {
-		return fmt.Errorf("static mount prefix is required")
-	}
-	if !strings.HasPrefix(prefix, "/") {
-		return fmt.Errorf("static mount prefix %q must start with '/'", prefix)
+	if err := netx.ValidatePathPattern(prefix); err != nil {
+		return fmt.Errorf("invalid static mount prefix: %w", err)
 	}
 
 	dir := strings.TrimSpace(mount.Directory)
@@ -128,7 +126,7 @@ func (router *pluginRouter) matchPluginStatic(path string) (StaticMount, http.Ha
 		if binding == nil || binding.handler == nil {
 			continue
 		}
-		if !pathMatchesPattern(path, pattern) {
+		if !netx.MatchPathPattern(path, pattern, netx.RootPathSubtree) {
 			continue
 		}
 		if len(pattern) > len(bestPattern) {
