@@ -247,6 +247,7 @@ func (l *pluginLoader) newInner(runAsUser string) (*goplugin.Manager, error) {
 		GRPC: &goplugin.GRPCConfig{
 			HandshakeConfig:  handshake,
 			RunAsUser:        strings.TrimSpace(runAsUser),
+			SkipHostEnv:      true,
 			AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
 			SyncStderr:       os.Stderr,
 			LoaderWithBroker: func(_ context.Context, _ *goplugin.GRPCBroker, c *grpc.ClientConn) (any, error) {
