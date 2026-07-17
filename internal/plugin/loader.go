@@ -14,7 +14,6 @@ import (
 	wasmpb "arupa/pluginsdk/wasm/proto"
 
 	goplugin "github.com/SteelDrEgg/go-plugin"
-	"github.com/tetratelabs/wazero"
 	"google.golang.org/grpc"
 )
 
@@ -256,15 +255,19 @@ func (l *pluginLoader) newInner(runAsUser string) (*goplugin.Manager, error) {
 		},
 		WASM: &goplugin.WASMConfig{
 			Loader: l.wasmLoader,
+			ClientConfigOverride: func(cfg *goplugin.WASMClientConfig) {
+				cfg.ModuleConfig = cfg.ModuleConfig.WithSysWalltime()
+			},
 		},
 	})
 }
 
-func (l *pluginLoader) wasmLoader(ctx context.Context, modulePath string, info goplugin.Info) (any, func(context.Context) error, error) {
-	moduleConfig := wazero.NewModuleConfig().
-		WithStartFunctions("_initialize").
-		WithSysWalltime()
-	loader, err := wasmpb.NewPluginPlugin(ctx, wasmpb.WazeroModuleConfig(moduleConfig))
+func (l *pluginLoader) wasmLoader(ctx context.Context, modulePath string, info goplugin.Info, clientConfig *goplugin.WASMClientConfig) (any, func(context.Context) error, error) {
+	loader, err := wasmpb.NewPluginPlugin(
+		ctx,
+		wasmpb.WazeroRuntime(clientConfig.NewRuntime),
+		wasmpb.WazeroModuleConfig(clientConfig.ModuleConfig),
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("new wasm loader: %w", err)
 	}
