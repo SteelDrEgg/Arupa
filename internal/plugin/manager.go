@@ -55,10 +55,11 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.Socket == nil {
 		return nil, fmt.Errorf("Socket is required")
 	}
-	log := opts.Logger
-	if log == nil {
-		log = slog.Default()
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
+	managerLog := logger.With("component", "kernel", "from", "plugin_manager")
 
 	if err := os.MkdirAll(cfg.PluginTempDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
@@ -66,8 +67,8 @@ func NewManager(opts Options) (*Manager, error) {
 
 	kv := NewKV()
 	registry := NewRegistry(kv)
-	socketBridge := newSocketBridge(opts.Socket, log)
-	api := NewHostAPI(kv, socketBridge, log)
+	socketBridge := newSocketBridge(opts.Socket, logger)
+	api := NewHostAPI(kv, socketBridge, logger)
 	callback := newGRPCHostServer(api)
 	callbackAddr, err := callback.Start()
 	if err != nil {
@@ -86,14 +87,14 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 
 	router := newPluginRouter()
-	registrar := newPluginRegistrar(router, socketBridge, log)
+	registrar := newPluginRegistrar(router, socketBridge, managerLog)
 	runtime := newPluginRuntime(pluginRuntimeOptions{
 		Config:    cfg,
-		Catalog:   newPluginCatalog(kv, log),
+		Catalog:   newPluginCatalog(kv, managerLog),
 		Loader:    loader,
 		Registrar: registrar,
 		Registry:  registry,
-		Logger:    log,
+		Logger:    managerLog,
 	})
 
 	m := &Manager{

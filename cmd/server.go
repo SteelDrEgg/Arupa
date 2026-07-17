@@ -18,6 +18,7 @@ import (
 )
 
 func runServer(cfg conf.Config, logger *slog.Logger) error {
+	serverLog := logger.With("component", "kernel", "from", "server")
 	mux := http.NewServeMux()
 
 	// Socket.IO server (plugins attach their own namespaces).
@@ -48,7 +49,7 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	web.StartKernel(mux, version, reloadConfig)
 
 	if err := pm.LoadConfigured(); err != nil {
-		logger.Error("failed to start configured plugins", "err", err)
+		serverLog.Error("failed to start configured plugins", "err", err)
 	}
 	for _, entry := range pm.Entries() {
 		logArgs := []any{
@@ -62,15 +63,15 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		if entry.Type == "grpc" {
 			logArgs = append(logArgs, "run_as_user", entry.Config.RunAsUser)
 		}
-		logger.Info("discovered plugin", logArgs...)
+		serverLog.Info("discovered plugin", logArgs...)
 	}
 
-	handler := auth.WithUser(auth.RouteAccess(mux))
+	handler := logHTTPRequests(logger, auth.WithUser(auth.RouteAccess(mux)))
 	srv := &http.Server{Addr: cfg.Listen, Handler: handler}
 	errCh := make(chan error, 1)
 
 	go func() {
-		logger.Info("arupa listening", "addr", cfg.Listen)
+		serverLog.Info("arupa listening", "addr", cfg.Listen)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -85,9 +86,9 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		case sig := <-stop:
 			if sig == syscall.SIGHUP {
 				if err := reloadConfig(); err != nil {
-					logger.Error("failed to reload configuration", "err", err)
+					logger.With("component", "kernel", "from", "config").Error("failed to reload configuration", "err", err)
 				} else {
-					logger.Info("configuration reloaded")
+					logger.With("component", "kernel", "from", "config").Info("configuration reloaded")
 				}
 				continue
 			}
@@ -97,7 +98,7 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		break
 	}
 
-	logger.Info("shutting down")
+	serverLog.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(ctx)

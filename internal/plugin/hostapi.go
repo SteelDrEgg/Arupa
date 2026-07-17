@@ -84,16 +84,18 @@ func (h *HostAPI) PatchParams(source string, patch ParamsPatch) error {
 	return h.params.PatchPluginParams(source, patch)
 }
 
-// Log writes a plugin log line at the requested level.
-func (h *HostAPI) Log(level, msg string) {
+// Log writes a plugin log line at the requested level. source is established
+// by the authenticated host boundary; it is never supplied by a plugin.
+func (h *HostAPI) Log(source, level, msg string) {
+	log := h.log.With("component", "plugin", "from", source)
 	switch level {
 	case "debug":
-		h.log.Debug(msg, "source", "plugin")
+		log.Debug(msg)
 	case "warn", "warning":
-		h.log.Warn(msg, "source", "plugin")
+		log.Warn(msg)
 	case "error":
-		h.log.Error(msg, "source", "plugin")
+		log.Error(msg)
 	default:
-		h.log.Info(msg, "source", "plugin")
+		log.Info(msg)
 	}
 }

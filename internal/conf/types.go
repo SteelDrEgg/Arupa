@@ -2,10 +2,18 @@ package conf
 
 type Config struct {
 	Listen string
+	Log    LogConfig
 	Auth
 	Route RouteConfig
 	PluginSystem
 	Pages map[string]string
+}
+
+// LogConfig controls the process-wide structured log output.
+// Format is either "json" or "text"; Level follows slog's level names.
+type LogConfig struct {
+	Format string
+	Level  string
 }
 
 type Auth struct {

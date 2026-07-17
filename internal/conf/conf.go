@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -23,7 +24,11 @@ var (
 func defaultConfig() Config {
 	return Config{
 		Listen: ":8080",
-		Auth:   Auth{},
+		Log: LogConfig{
+			Format: "json",
+			Level:  "info",
+		},
+		Auth: Auth{},
 		PluginSystem: PluginSystem{
 			PluginDir:     "plugins",
 			PluginTempDir: "tmp",
@@ -68,6 +73,9 @@ func Update() (err error) {
 		return fmt.Errorf("failed to update global config %w", err)
 	}
 	if err := validateRouteAllow(next.Route.Allow); err != nil {
+		return err
+	}
+	if err := validateLog(next.Log); err != nil {
 		return err
 	}
 	Conf = next
@@ -120,6 +128,7 @@ func Read() Config {
 	// Create a deep copy of the config
 	conf := Config{
 		Listen: Conf.Listen,
+		Log:    Conf.Log,
 		Auth: Auth{
 			Users:  make(map[string]string),
 			Groups: make(map[string][]string, len(Conf.Auth.Groups)),
@@ -145,6 +154,20 @@ func Read() Config {
 	}
 
 	return conf
+}
+
+func validateLog(logCfg LogConfig) error {
+	switch strings.ToLower(strings.TrimSpace(logCfg.Format)) {
+	case "json", "text":
+	default:
+		return fmt.Errorf("invalid Log.Format %q: must be json or text", logCfg.Format)
+	}
+
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.TrimSpace(logCfg.Level))); err != nil {
+		return fmt.Errorf("invalid Log.Level %q: %w", logCfg.Level, err)
+	}
+	return nil
 }
 
 // GetUsers returns a copy of the users map in a thread-safe manner
