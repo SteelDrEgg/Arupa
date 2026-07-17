@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
+
+	"arupa/internal/netx"
 
 	"github.com/BurntSushi/toml"
 	"github.com/google/renameio"
@@ -21,7 +24,11 @@ var (
 func defaultConfig() Config {
 	return Config{
 		Listen: ":8080",
-		Auth:   Auth{},
+		Log: LogConfig{
+			Format: "json",
+			Level:  "info",
+		},
+		Auth: Auth{},
 		PluginSystem: PluginSystem{
 			PluginDir:     "plugins",
 			PluginTempDir: "tmp",
@@ -65,6 +72,12 @@ func Update() (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to update global config %w", err)
 	}
+	if err := validateRouteAllow(next.Route.Allow); err != nil {
+		return err
+	}
+	if err := validateLog(next.Log); err != nil {
+		return err
+	}
 	Conf = next
 	return nil
 }
@@ -73,6 +86,9 @@ func Update() (err error) {
 func Write(conf Config) (err error) {
 	mu.Lock()
 	defer mu.Unlock()
+	if err := validateRouteAllow(conf.Route.Allow); err != nil {
+		return err
+	}
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(conf); err != nil {
@@ -95,6 +111,15 @@ func Write(conf Config) (err error) {
 	return nil
 }
 
+func validateRouteAllow(allow map[string][]string) error {
+	for pattern := range allow {
+		if err := netx.ValidatePathPattern(pattern); err != nil {
+			return fmt.Errorf("invalid Route.Allow pattern: %w", err)
+		}
+	}
+	return nil
+}
+
 // Read returns a copy of the current configuration
 func Read() Config {
 	mu.RLock()
@@ -103,6 +128,7 @@ func Read() Config {
 	// Create a deep copy of the config
 	conf := Config{
 		Listen: Conf.Listen,
+		Log:    Conf.Log,
 		Auth: Auth{
 			Users:  make(map[string]string),
 			Groups: make(map[string][]string, len(Conf.Auth.Groups)),
@@ -128,6 +154,20 @@ func Read() Config {
 	}
 
 	return conf
+}
+
+func validateLog(logCfg LogConfig) error {
+	switch strings.ToLower(strings.TrimSpace(logCfg.Format)) {
+	case "json", "text":
+	default:
+		return fmt.Errorf("invalid Log.Format %q: must be json or text", logCfg.Format)
+	}
+
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.TrimSpace(logCfg.Level))); err != nil {
+		return fmt.Errorf("invalid Log.Level %q: %w", logCfg.Level, err)
+	}
+	return nil
 }
 
 // GetUsers returns a copy of the users map in a thread-safe manner

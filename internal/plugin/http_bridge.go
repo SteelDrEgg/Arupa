@@ -91,8 +91,8 @@ func (router *pluginRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ownership is exclusive for each pattern/method while the owning plugin is
 // loaded; Stop removes the entry so another plugin can claim it later.
 func (router *pluginRouter) registerRoute(owner string, route HTTPRoute, lp *loadedPlugin) error {
-	if route.Pattern == "" {
-		return fmt.Errorf("http route pattern is required")
+	if err := netx.ValidatePathPattern(route.Pattern); err != nil {
+		return fmt.Errorf("invalid http route pattern: %w", err)
 	}
 	if lp == nil || lp.conn == nil {
 		return fmt.Errorf("http route %q requires a loaded plugin connection", route.Pattern)
@@ -156,7 +156,7 @@ func (router *pluginRouter) matchPluginRoute(method, path string) (HTTPRoute, st
 		if binding == nil || binding.plugin == nil || binding.plugin.conn == nil {
 			continue
 		}
-		if !pathMatchesRoutePattern(path, key.pattern) {
+		if !netx.MatchPathPattern(path, key.pattern, netx.RootPathExact) {
 			continue
 		}
 		if len(key.pattern) > len(bestPattern) {
@@ -263,26 +263,6 @@ func writePluginAccessError(w http.ResponseWriter, r *http.Request, decision aut
 		}
 	}
 	return auth.WriteAccessError(w, decision)
-}
-
-// pathMatchesPattern implements the plugin dispatcher's small matching model:
-// trailing-slash patterns are subtree prefixes, and every other pattern is an
-// exact match.
-func pathMatchesPattern(path, pattern string) bool {
-	if pattern == "" {
-		return false
-	}
-	if strings.HasSuffix(pattern, "/") {
-		return strings.HasPrefix(path, pattern)
-	}
-	return path == pattern
-}
-
-func pathMatchesRoutePattern(path, pattern string) bool {
-	if pattern == "/" {
-		return path == "/"
-	}
-	return pathMatchesPattern(path, pattern)
 }
 
 func normalizeRouteMethod(method string) string {

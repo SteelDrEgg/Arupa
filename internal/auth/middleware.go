@@ -71,23 +71,13 @@ func matchRouteAccess(path string, allow map[string][]string) (string, []string,
 	best := ""
 	var groups []string
 	for pattern, candidateGroups := range allow {
-		if !matchesRouteAccess(path, pattern) || len(pattern) <= len(best) {
+		if !netx.MatchPathPattern(path, pattern, netx.RootPathExact) || len(pattern) <= len(best) {
 			continue
 		}
 		best = pattern
 		groups = candidateGroups
 	}
 	return best, groups, best != ""
-}
-
-func matchesRouteAccess(path, pattern string) bool {
-	if strings.HasSuffix(pattern, "/*") {
-		return strings.HasPrefix(path, strings.TrimSuffix(pattern, "*"))
-	}
-	if strings.HasSuffix(pattern, "/") {
-		return strings.HasPrefix(path, pattern)
-	}
-	return path == pattern
 }
 
 // WriteAccessError writes the HTTP response corresponding to an access

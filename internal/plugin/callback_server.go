@@ -173,7 +173,8 @@ func (s *grpcHostServer) SendPluginMessage(ctx context.Context, req *grpcpb.Plug
 	return &grpcpb.PluginMessageReply{Error: errStr, Message: message}, nil
 }
 
-func (s *grpcHostServer) Log(_ context.Context, req *grpcpb.LogRequest) (*grpcpb.LogReply, error) {
-	s.api.Log(req.GetLevel(), req.GetMessage())
+func (s *grpcHostServer) Log(ctx context.Context, req *grpcpb.LogRequest) (*grpcpb.LogReply, error) {
+	source, _ := ctx.Value(grpcPluginSourceKey{}).(string)
+	s.api.Log(source, req.GetLevel(), req.GetMessage())
 	return &grpcpb.LogReply{}, nil
 }

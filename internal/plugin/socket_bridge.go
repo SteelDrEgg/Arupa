@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"arupa/internal/auth"
 	"arupa/internal/netx"
@@ -35,6 +36,7 @@ func newSocketBridge(server *netx.Socket, log *slog.Logger) *socketBridge {
 	if log == nil {
 		log = slog.Default()
 	}
+	log = log.With("component", "kernel", "from", "socketio")
 	return &socketBridge{
 		server:     server,
 		log:        log,
@@ -118,6 +120,10 @@ func (b *socketBridge) installNamespaceHandlersLocked(nsName string, ns netx.Nam
 	})
 
 	ns.OnConnection(func(client *socket.Socket) {
+		b.log.Info("socket connected", "namespace", nsName, "socket_id", string(client.Id()))
+		client.On("disconnect", func(_ ...any) {
+			b.log.Info("socket disconnected", "namespace", nsName, "socket_id", string(client.Id()))
+		})
 		client.OnAny(func(args ...any) {
 			b.handleAny(nsName, client, args)
 		})
@@ -127,13 +133,19 @@ func (b *socketBridge) installNamespaceHandlersLocked(nsName string, ns netx.Nam
 func (b *socketBridge) authorizeNamespace(nsName string, client *socket.Socket) *socket.ExtendedError {
 	owner, ok := b.ownerForNamespace(nsName)
 	if !ok {
+		b.log.Warn("socket namespace unavailable", "namespace", nsName)
 		return socket.NewExtendedError("Unavailable", "namespace is not owned by a running plugin")
 	}
 	user := auth.UserFromSocket(client)
 	if err := socketAccessError(owner.plugin.accessPolicy().Check(user)); err != nil {
+		b.log.Warn("socket namespace access denied", "namespace", nsName, "plugin", owner.pluginName)
 		return err
 	}
-	return socketAccessError(owner.decl.Access.Check(user))
+	if err := socketAccessError(owner.decl.Access.Check(user)); err != nil {
+		b.log.Warn("socket namespace access denied", "namespace", nsName, "plugin", owner.pluginName)
+		return err
+	}
+	return nil
 }
 
 // unregisterPlugin releases all namespace ownership held by pluginName. The
@@ -229,6 +241,7 @@ func (owner socketOwner) handlesEvent(event string) bool {
 }
 
 func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socket.Socket, user User, data []any) {
+	start := time.Now()
 	payload, err := json.Marshal(data)
 	if err != nil {
 		b.log.Error("marshal socket event payload", "namespace", ns, "event", event, "err", err)
@@ -245,9 +258,10 @@ func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socke
 		Payload:   payload,
 	})
 	if err != nil {
-		b.log.Error("plugin socket handler failed", "namespace", ns, "event", event, "err", err)
+		b.log.Error("plugin socket handler failed", "namespace", ns, "event", event, "plugin", owner.pluginName, "err", err)
 		return
 	}
+	b.log.Debug("socket event handled", "namespace", ns, "event", event, "plugin", owner.pluginName, "duration_ms", time.Since(start).Milliseconds())
 	for _, e := range emits {
 		if err := b.Emit(e); err != nil {
 			b.log.Error("apply plugin emit", "namespace", e.Namespace, "event", e.Event, "err", err)

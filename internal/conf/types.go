@@ -2,10 +2,18 @@ package conf
 
 type Config struct {
 	Listen string
+	Log    LogConfig
 	Auth
 	Route RouteConfig
 	PluginSystem
 	Pages map[string]string
+}
+
+// LogConfig controls the process-wide structured log output.
+// Format is either "json" or "text"; Level follows slog's level names.
+type LogConfig struct {
+	Format string
+	Level  string
 }
 
 type Auth struct {
@@ -14,7 +22,8 @@ type Auth struct {
 }
 
 // RouteConfig contains host-level access rules. Rules are matched before the
-// request reaches either a host handler or a plugin handler.
+// request reaches either a host handler or a plugin handler. Patterns are
+// exact unless they end in "/", which selects a subtree; "/*" is unsupported.
 type RouteConfig struct {
 	Allow map[string][]string
 }

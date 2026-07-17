@@ -79,7 +79,7 @@ func (w wasmHostFns) SendPluginMessage(ctx context.Context, req *wasmpb.PluginMe
 }
 
 func (w wasmHostFns) Log(_ context.Context, req *wasmpb.LogRequest) (*wasmpb.LogReply, error) {
-	w.api.Log(req.GetLevel(), req.GetMessage())
+	w.api.Log(w.source, req.GetLevel(), req.GetMessage())
 	return &wasmpb.LogReply{}, nil
 }
 

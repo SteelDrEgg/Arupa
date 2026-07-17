@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"arupa/internal/conf"
+	"arupa/internal/logx"
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	bootstrapLogger := logx.New(conf.LogConfig{}, os.Stdout)
+	slog.SetDefault(bootstrapLogger)
 
 	opts, err := parseCLI(os.Args[1:], os.Stderr)
 	if err != nil {
@@ -28,6 +31,7 @@ func main() {
 	}
 
 	if opts.Username != "" {
+		logger := bootstrapLogger.With("component", "kernel", "from", "cli")
 		if err := createOrUpdateUser(opts.ConfigPath, opts.Username, opts.Password); err != nil {
 			logger.Error("failed to write user to config", "path", opts.ConfigPath, "user", opts.Username, "err", err)
 			os.Exit(1)
@@ -36,9 +40,11 @@ func main() {
 		return
 	}
 
-	cfg := loadServerConfig(opts.ConfigPath, logger)
+	cfg := loadServerConfig(opts.ConfigPath, bootstrapLogger)
+	logger := logx.New(cfg.Log, os.Stdout)
+	slog.SetDefault(logger)
 	if err := runServer(cfg, logger); err != nil {
-		logger.Error("server stopped with error", "err", err)
+		logger.With("component", "kernel", "from", "server").Error("server stopped with error", "err", err)
 		os.Exit(1)
 	}
 }
