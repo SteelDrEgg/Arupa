@@ -41,6 +41,15 @@ func (w wasmHostFns) KVList(_ context.Context, req *wasmpb.KVListRequest) (*wasm
 	return &wasmpb.KVListReply{Keys: w.api.KVList(req.GetNamespace())}, nil
 }
 
+func (w wasmHostFns) GetParams(_ context.Context, _ *wasmpb.ParamsGetRequest) (*wasmpb.ParamsGetReply, error) {
+	params, err := w.api.GetParams(w.source)
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return &wasmpb.ParamsGetReply{Params: params, Error: errStr}, nil
+}
+
 func (w wasmHostFns) PatchParams(_ context.Context, req *wasmpb.ParamsPatchRequest) (*wasmpb.ParamsPatchReply, error) {
 	var errStr string
 	if err := w.api.PatchParams(w.source, ParamsPatch{

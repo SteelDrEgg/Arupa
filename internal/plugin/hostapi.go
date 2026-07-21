@@ -13,7 +13,7 @@ type HostAPI struct {
 	kv         *KV
 	emitter    Emitter
 	dispatcher PluginMessageDispatcher
-	params     ParamsPatcher
+	params     ParamsStore
 	log        *slog.Logger
 }
 
@@ -31,8 +31,8 @@ func (h *HostAPI) SetMessageDispatcher(dispatcher PluginMessageDispatcher) {
 	h.dispatcher = dispatcher
 }
 
-// SetParamsPatcher installs the persistent Params updater.
-func (h *HostAPI) SetParamsPatcher(params ParamsPatcher) {
+// SetParamsStore installs the caller-scoped Params store.
+func (h *HostAPI) SetParamsStore(params ParamsStore) {
 	h.params = params
 }
 
@@ -82,6 +82,17 @@ func (h *HostAPI) PatchParams(source string, patch ParamsPatch) error {
 		return fmt.Errorf("plugin params patcher not configured")
 	}
 	return h.params.PatchPluginParams(source, patch)
+}
+
+// GetParams returns the current effective Params for the authenticated plugin.
+func (h *HostAPI) GetParams(source string) (map[string]string, error) {
+	if source == "" {
+		return nil, fmt.Errorf("plugin params source is not authenticated")
+	}
+	if h.params == nil {
+		return nil, fmt.Errorf("plugin params store not configured")
+	}
+	return h.params.GetPluginParams(source)
 }
 
 // Log writes a plugin log line at the requested level. source is established

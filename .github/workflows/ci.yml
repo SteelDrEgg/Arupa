@@ -54,9 +54,11 @@ jobs:
       matrix:
         goos:
           - linux
-          - darwin
+#          - darwin
         goarch:
-          - amd64
+        # idk why amd64 gives API rate limit exceeded all the time when run arduino/setup-protoc@v3
+        # it should be fine if arm64 is fine
+#          - amd64
           - arm64
 
     steps:

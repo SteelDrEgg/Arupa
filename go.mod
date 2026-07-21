@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.5.0
-	github.com/SteelDrEgg/go-plugin v0.1.3
+	github.com/SteelDrEgg/go-plugin v0.2.0
 	github.com/google/renameio v1.0.1
 	github.com/knqyf263/go-plugin v0.9.0
 	github.com/shirou/gopsutil/v4 v4.25.8

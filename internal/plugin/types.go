@@ -128,7 +128,8 @@ type PluginMessageDispatcher interface {
 	DispatchPluginMessage(ctx context.Context, msg PluginMessage) (string, error)
 }
 
-// ParamsPatcher persists caller-scoped plugin Params updates.
-type ParamsPatcher interface {
+// ParamsStore reads and persists caller-scoped plugin Params.
+type ParamsStore interface {
+	GetPluginParams(name string) (map[string]string, error)
 	PatchPluginParams(name string, patch ParamsPatch) error
 }

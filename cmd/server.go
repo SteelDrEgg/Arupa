@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -68,11 +69,24 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 
 	handler := logHTTPRequests(logger, auth.WithUser(auth.RouteAccess(mux)))
 	srv := &http.Server{Addr: cfg.Listen, Handler: handler}
+	if cfg.TLS {
+		tlsConfig, err := netx.NewSelfSignedTLSConfig()
+		if err != nil {
+			return fmt.Errorf("configure self-signed TLS: %w", err)
+		}
+		srv.TLSConfig = tlsConfig
+	}
 	errCh := make(chan error, 1)
 
 	go func() {
-		serverLog.Info("arupa listening", "addr", cfg.Listen)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		protocol := "http"
+		serve := srv.ListenAndServe
+		if cfg.TLS {
+			protocol = "https"
+			serve = func() error { return srv.ListenAndServeTLS("", "") }
+		}
+		serverLog.Info("arupa listening", "addr", cfg.Listen, "protocol", protocol)
+		if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

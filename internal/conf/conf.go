@@ -78,6 +78,9 @@ func Update() (err error) {
 	if err := validateLog(next.Log); err != nil {
 		return err
 	}
+	if err := validatePluginChecksums(next.PluginSystem.Plugins); err != nil {
+		return err
+	}
 	Conf = next
 	return nil
 }
@@ -86,7 +89,15 @@ func Update() (err error) {
 func Write(conf Config) (err error) {
 	mu.Lock()
 	defer mu.Unlock()
+	return writeLocked(conf)
+}
+
+// writeLocked persists conf and updates Conf. The caller must hold mu.Lock.
+func writeLocked(conf Config) (err error) {
 	if err := validateRouteAllow(conf.Route.Allow); err != nil {
+		return err
+	}
+	if err := validatePluginChecksums(conf.PluginSystem.Plugins); err != nil {
 		return err
 	}
 
@@ -124,31 +135,35 @@ func validateRouteAllow(allow map[string][]string) error {
 func Read() Config {
 	mu.RLock()
 	defer mu.RUnlock()
+	return cloneConfig(Conf)
+}
 
-	// Create a deep copy of the config
+// cloneConfig returns a deep copy of cfg. The caller is responsible for
+// synchronizing access when cfg is the package-global Conf.
+func cloneConfig(cfg Config) Config {
 	conf := Config{
-		Listen: Conf.Listen,
-		Log:    Conf.Log,
+		Listen: cfg.Listen,
+		TLS:    cfg.TLS,
+		Log:    cfg.Log,
 		Auth: Auth{
 			Users:  make(map[string]string),
-			Groups: make(map[string][]string, len(Conf.Auth.Groups)),
+			Groups: make(map[string][]string, len(cfg.Auth.Groups)),
 		},
 		Route: RouteConfig{
-			Allow: cloneRouteAllow(Conf.Route.Allow),
+			Allow: cloneRouteAllow(cfg.Route.Allow),
 		},
-		PluginSystem: Conf.PluginSystem.Clone(),
+		PluginSystem: cfg.PluginSystem.Clone(),
 	}
 
-	// Copy the users map
-	for k, v := range Conf.Auth.Users {
+	for k, v := range cfg.Auth.Users {
 		conf.Auth.Users[k] = v
 	}
-	for group, users := range Conf.Auth.Groups {
+	for group, users := range cfg.Auth.Groups {
 		conf.Auth.Groups[group] = append([]string(nil), users...)
 	}
-	if len(Conf.Pages) > 0 {
-		conf.Pages = make(map[string]string, len(Conf.Pages))
-		for k, v := range Conf.Pages {
+	if len(cfg.Pages) > 0 {
+		conf.Pages = make(map[string]string, len(cfg.Pages))
+		for k, v := range cfg.Pages {
 			conf.Pages[k] = v
 		}
 	}
@@ -166,6 +181,15 @@ func validateLog(logCfg LogConfig) error {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(strings.TrimSpace(logCfg.Level))); err != nil {
 		return fmt.Errorf("invalid Log.Level %q: %w", logCfg.Level, err)
+	}
+	return nil
+}
+
+func validatePluginChecksums(plugins map[string]Plugin) error {
+	for name, plugin := range plugins {
+		if _, _, err := plugin.SHA256Checksum(); err != nil {
+			return fmt.Errorf("invalid Plugins.%s.Checksum: %w", name, err)
+		}
 	}
 	return nil
 }

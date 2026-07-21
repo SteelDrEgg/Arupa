@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.5.0 h1:W5quZX/G/csjUnuI8SUYlsHs9M38FC7znL0lIO+DvMg=
 github.com/BurntSushi/toml v1.5.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/SteelDrEgg/go-plugin v0.1.3 h1:KfkCThVBGTC4RowOvOs9+HgkfZF/rZsrIFtBnwfZpbA=
-github.com/SteelDrEgg/go-plugin v0.1.3/go.mod h1:pMER5/chuAYGUtJT5KcApoqwDETJHh3aZkPgo11ud5w=
+github.com/SteelDrEgg/go-plugin v0.2.0 h1:WXnr7hRwPI1/0/ma9mt7NEAI7yP6m6ebPAfSwiGmkBk=
+github.com/SteelDrEgg/go-plugin v0.2.0/go.mod h1:MfJVg41Uugt/Aa2RcLHzuuOa/Em0aU4CEdow4szFIMA=
 github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
 github.com/andybalholm/brotli v1.2.1/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=
