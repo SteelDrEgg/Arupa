@@ -86,7 +86,10 @@ func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
 		return Config{}, fmt.Errorf("default plugin params cannot be patched by a plugin")
 	}
 
-	next := Read()
+	mu.Lock()
+	defer mu.Unlock()
+
+	next := cloneConfig(Conf)
 	if next.PluginSystem.Plugins == nil {
 		next.PluginSystem.Plugins = map[string]Plugin{}
 	}
@@ -111,7 +114,7 @@ func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
 	}
 	next.PluginSystem.Plugins[name] = policy
 
-	if err := Write(next); err != nil {
+	if err := writeLocked(next); err != nil {
 		return Config{}, err
 	}
 	return next, nil

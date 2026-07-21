@@ -105,7 +105,7 @@ func NewManager(opts Options) (*Manager, error) {
 		runtime:  runtime,
 	}
 	api.SetMessageDispatcher(m)
-	api.SetParamsPatcher(m)
+	api.SetParamsStore(m)
 
 	if err := netx.HandleSafe(opts.Mux, "/", http.HandlerFunc(m.ServeHTTP)); err != nil {
 		_ = m.Close()
@@ -149,6 +149,21 @@ func (m *Manager) PatchPluginParams(name string, patch ParamsPatch) error {
 	}
 	m.UpdateConfig(next.PluginSystem)
 	return nil
+}
+
+// GetPluginParams returns the current effective, environment-resolved Params
+// for a registered plugin. The caller identity is established at the protocol
+// boundary and is never provided by the plugin request itself.
+func (m *Manager) GetPluginParams(name string) (map[string]string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("plugin name is required")
+	}
+	params, err := m.Config().EffectivePlugin(name).ResolveParams(os.LookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	return params, nil
 }
 
 // LoadConfigured scans the configured plugin directory and starts plugins whose

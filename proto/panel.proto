@@ -119,6 +119,13 @@ message KVListReply { repeated string keys = 1; }
 message EmitReply { string error = 1; }
 
 // ===== persisted plugin params =====
+// The caller is identified by the authenticated host callback context.
+message ParamsGetRequest {}
+message ParamsGetReply {
+  map<string, string> params = 1;
+  string error = 2;
+}
+
 message ParamsPatchRequest {
   map<string, string> set = 1;
   repeated string delete = 2;
@@ -163,6 +170,7 @@ service Host {
   rpc KVSet(KVSetRequest) returns (KVSetReply);
   rpc KVDelete(KVDeleteRequest) returns (KVDeleteReply);
   rpc KVList(KVListRequest) returns (KVListReply);
+  rpc GetParams(ParamsGetRequest) returns (ParamsGetReply);
   rpc PatchParams(ParamsPatchRequest) returns (ParamsPatchReply);
   rpc Emit(EmitInstruction) returns (EmitReply);
   rpc SendPluginMessage(PluginMessage) returns (PluginMessageReply);
