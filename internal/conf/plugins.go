@@ -1,6 +1,8 @@
 package conf
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -75,6 +77,27 @@ func (c Config) PluginRunAsUser(name string) string {
 	return c.PluginSystem.EffectivePlugin(name).RunAsUser
 }
 
+// SHA256Checksum returns the normalized expected package digest. An empty
+// Checksum disables verification. The method is shared by configuration
+// validation and the plugin loader so every launch path applies the same
+// syntax rules.
+func (p Plugin) SHA256Checksum() (digest string, enabled bool, err error) {
+	raw := strings.TrimSpace(p.Checksum)
+	if raw == "" {
+		return "", false, nil
+	}
+
+	algorithm, digest, found := strings.Cut(raw, ":")
+	if !found || !strings.EqualFold(algorithm, "sha256") {
+		return "", false, fmt.Errorf("must use sha256:<64 hexadecimal digits>")
+	}
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", false, fmt.Errorf("must use sha256:<64 hexadecimal digits>")
+	}
+	return strings.ToLower(digest), true, nil
+}
+
 // PatchPluginParams updates one plugin's explicit Params override and persists
 // the full config. Defaults remain inherited at EffectivePlugin read time.
 func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
@@ -136,6 +159,7 @@ func (s PluginSystem) EffectivePlugin(name string) Plugin {
 	}
 	base.Restart = strings.TrimSpace(base.Restart)
 	base.RunAsUser = strings.TrimSpace(base.RunAsUser)
+	base.Checksum = strings.TrimSpace(base.Checksum)
 	if base.Params == nil {
 		base.Params = map[string]string{}
 	}
@@ -185,6 +209,9 @@ func mergePlugin(base, override Plugin) Plugin {
 	if strings.TrimSpace(override.RunAsUser) != "" {
 		base.RunAsUser = override.RunAsUser
 	}
+	if strings.TrimSpace(override.Checksum) != "" {
+		base.Checksum = override.Checksum
+	}
 	if len(override.Allow) > 0 {
 		base.Allow = append([]string(nil), override.Allow...)
 	}
@@ -203,6 +230,7 @@ func clonePlugin(p Plugin) Plugin {
 	out := Plugin{
 		Restart:   p.Restart,
 		RunAsUser: p.RunAsUser,
+		Checksum:  p.Checksum,
 		Allow:     append([]string(nil), p.Allow...),
 	}
 	if len(p.Params) > 0 {

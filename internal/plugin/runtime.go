@@ -378,7 +378,8 @@ func (r *pluginRuntime) StartConfigured() error {
 			continue
 		}
 		if _, err := r.StartByName(entry.Name); err != nil {
-			r.log.Error("failed to start plugin", "name", entry.Name, "path", entry.PackagePath, "err", err)
+			// StartByName records the load failure with its package path. Continue
+			// starting the kernel even when an individual plugin is unavailable.
 		}
 	}
 	return nil
@@ -431,6 +432,8 @@ func (r *pluginRuntime) loadScanned(scanned DiscoveredPlugin, cfg conf.Plugin) (
 		var unfaithful *unfaithfulPluginError
 		if errors.As(err, &unfaithful) {
 			r.log.Error("unfaithful plugin", "name", scanned.Name, "path", scanned.PackagePath, "err", err)
+		} else {
+			r.log.Error("failed to load plugin", "name", scanned.Name, "path", scanned.PackagePath, "err", err)
 		}
 		return nil, false, err
 	}

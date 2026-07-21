@@ -78,6 +78,9 @@ func Update() (err error) {
 	if err := validateLog(next.Log); err != nil {
 		return err
 	}
+	if err := validatePluginChecksums(next.PluginSystem.Plugins); err != nil {
+		return err
+	}
 	Conf = next
 	return nil
 }
@@ -92,6 +95,9 @@ func Write(conf Config) (err error) {
 // writeLocked persists conf and updates Conf. The caller must hold mu.Lock.
 func writeLocked(conf Config) (err error) {
 	if err := validateRouteAllow(conf.Route.Allow); err != nil {
+		return err
+	}
+	if err := validatePluginChecksums(conf.PluginSystem.Plugins); err != nil {
 		return err
 	}
 
@@ -174,6 +180,15 @@ func validateLog(logCfg LogConfig) error {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(strings.TrimSpace(logCfg.Level))); err != nil {
 		return fmt.Errorf("invalid Log.Level %q: %w", logCfg.Level, err)
+	}
+	return nil
+}
+
+func validatePluginChecksums(plugins map[string]Plugin) error {
+	for name, plugin := range plugins {
+		if _, _, err := plugin.SHA256Checksum(); err != nil {
+			return fmt.Errorf("invalid Plugins.%s.Checksum: %w", name, err)
+		}
 	}
 	return nil
 }

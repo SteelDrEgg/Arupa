@@ -2,7 +2,10 @@ package plugin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -88,6 +91,10 @@ func newPluginLoader(opts pluginLoaderOptions) (*pluginLoader, error) {
 }
 
 func (l *pluginLoader) load(scanned DiscoveredPlugin, cfg conf.Plugin) (*pluginLoadResult, error) {
+	if err := verifyPackageChecksum(scanned.PackagePath, cfg); err != nil {
+		return nil, fmt.Errorf("verify plugin %q package checksum: %w", scanned.Name, err)
+	}
+
 	params, err := cfg.ResolveParams(os.LookupEnv)
 	if err != nil {
 		return nil, fmt.Errorf("resolve params for plugin %q: %w", scanned.Name, err)
@@ -189,6 +196,34 @@ func (l *pluginLoader) load(scanned DiscoveredPlugin, cfg conf.Plugin) (*pluginL
 		rootPath:     handle.RootPath(),
 		runAsUser:    runAsUser,
 	}, nil
+}
+
+// verifyPackageChecksum verifies the raw .plg archive bytes before the archive
+// is extracted or its plugin code is loaded.
+func verifyPackageChecksum(path string, cfg conf.Plugin) error {
+	expected, enabled, err := cfg.SHA256Checksum()
+	if err != nil {
+		return fmt.Errorf("invalid configured checksum: %w", err)
+	}
+	if !enabled {
+		return nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open plugin package: %w", err)
+	}
+	defer f.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return fmt.Errorf("hash plugin package: %w", err)
+	}
+	actual := hex.EncodeToString(hash.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch: expected sha256:%s, got sha256:%s", expected, actual)
+	}
+	return nil
 }
 
 func (lp *loadedPlugin) accessPolicy() auth.AccessPolicy {

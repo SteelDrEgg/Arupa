@@ -47,6 +47,10 @@ type Plugin struct {
 	// RunAsUser controls the OS user used to start gRPC plugin processes.
 	// Empty means the plugin runs as the current arupa process user.
 	RunAsUser string `json:"run_as_user,omitempty"`
+	// Checksum is the optional SHA-256 digest of the complete .plg package.
+	// It must use the form "sha256:<64 lowercase-or-uppercase hex digits>".
+	// An empty value disables package integrity checking.
+	Checksum string `json:"checksum,omitempty"`
 	// Allow lists groups that may access the plugin as a whole. An empty list
 	// leaves the plugin open; route and event policies are declared by plugins.
 	Allow []string `json:"allow,omitempty"`
