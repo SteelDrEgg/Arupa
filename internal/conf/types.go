@@ -2,6 +2,7 @@ package conf
 
 type Config struct {
 	Listen string
+	TLS    bool
 	Log    LogConfig
 	Auth
 	Route RouteConfig

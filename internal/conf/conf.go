@@ -143,6 +143,7 @@ func Read() Config {
 func cloneConfig(cfg Config) Config {
 	conf := Config{
 		Listen: cfg.Listen,
+		TLS:    cfg.TLS,
 		Log:    cfg.Log,
 		Auth: Auth{
 			Users:  make(map[string]string),
