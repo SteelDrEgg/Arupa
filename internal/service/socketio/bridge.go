@@ -142,8 +142,16 @@ func (b *Bridge) installNamespaceHandlersLocked(namespace string, ns netx.Namesp
 	})
 	ns.OnConnection(func(client *socket.Socket) {
 		b.log.Info("socket connected", "namespace", namespace, "socket_id", string(client.Id()))
-		client.On("disconnect", func(_ ...any) {
+
+		// Bind disconnect to the service that accepted this socket.
+		// Namespace ownership may be cleared or replaced before disconnect runs.
+		current, hasOwner := b.ownerForNamespace(namespace)
+		user := auth.UserFromSocket(client)
+		client.On("disconnect", func(args ...any) {
 			b.log.Info("socket disconnected", "namespace", namespace, "socket_id", string(client.Id()))
+			if hasOwner {
+				b.handleDisconnect(current, namespace, string(client.Id()), user, args)
+			}
 		})
 		client.OnAny(func(args ...any) {
 			b.handleAny(namespace, client, args)
@@ -199,7 +207,16 @@ func (b *Bridge) handleAny(namespace string, client *socket.Socket, args []any) 
 			return
 		}
 	}
-	b.handle(current, namespace, event, client, user, data)
+	b.handle(current, namespace, event, string(client.Id()), user, data)
+}
+
+func (b *Bridge) handleDisconnect(current owner, namespace, socketID string, user spec.User, data []any) {
+	const event = "disconnect"
+	if !current.handlesEvent(event) {
+		b.log.Debug("ignore undeclared socket event", "namespace", namespace, "event", event, "service", current.serviceName)
+		return
+	}
+	b.handle(current, namespace, event, socketID, user, data)
 }
 
 func (b *Bridge) emitAccessError(client *socket.Socket, event string, decision auth.AccessDecision) {
@@ -237,7 +254,7 @@ func (current owner) handlesEvent(event string) bool {
 	return ok
 }
 
-func (b *Bridge) handle(current owner, namespace, event string, client *socket.Socket, user spec.User, data []any) {
+func (b *Bridge) handle(current owner, namespace, event, socketID string, user spec.User, data []any) {
 	start := time.Now()
 	payload, err := json.Marshal(data)
 	if err != nil {
@@ -249,7 +266,7 @@ func (b *Bridge) handle(current owner, namespace, event string, client *socket.S
 	defer cancel()
 	emits, err := current.endpoint.Connection().HandleSocketEvent(ctx, &spec.SocketEvent{
 		RouteID: current.routeID, Namespace: namespace, Event: event,
-		SocketID: string(client.Id()), User: userOrNil(user), Payload: payload,
+		SocketID: socketID, User: userOrNil(user), Payload: payload,
 	})
 	if err != nil {
 		b.log.Error("service socket handler failed", "namespace", namespace, "event", event, "service", current.serviceName, "err", err)

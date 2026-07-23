@@ -257,7 +257,8 @@ func (r *Registry) matchHTTP(method, path string) (*binding, bool, []string) {
 	best := ""
 	for key, current := range r.http {
 		rootMode := netx.RootPathExact
-		if current.transport.Spec().Type == spec.TransportStatic && current.transport.StaticDirectory() {
+		if current.transport.Spec().Type == spec.TransportProxy ||
+			current.transport.Spec().Type == spec.TransportStatic && current.transport.StaticDirectory() {
 			rootMode = netx.RootPathSubtree
 		}
 		if netx.MatchPathPattern(path, key.pattern, rootMode) && len(key.pattern) > len(best) {

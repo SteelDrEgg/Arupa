@@ -351,7 +351,15 @@ type inheritedProxy struct {
 
 func (p *inheritedProxy) prepare(config *goservice.ClientConfig) error {
 	return p.prepareWith(config, func(address *net.UnixAddr) (inheritedUnixListener, error) {
-		return net.ListenUnix("unix", address)
+		listener, err := net.ListenUnix("unix", address)
+		if err != nil {
+			return nil, err
+		}
+		// The child process owns a duplicate of this listener after launch.
+		// Closing the parent's copy must not unlink the socket path while that
+		// inherited listener is still serving.
+		listener.SetUnlinkOnClose(false)
+		return listener, nil
 	})
 }
 
