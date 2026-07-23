@@ -1,4 +1,6 @@
-package service
+// Package catalog discovers and validates service bundles without starting
+// their runtime.
+package catalog
 
 import (
 	"archive/zip"
@@ -11,12 +13,21 @@ import (
 	"sort"
 	"strings"
 
+	"arupa/internal/service/spec"
+
 	goservice "github.com/SteelDrEgg/go-plugin"
 	"gopkg.in/yaml.v3"
 )
 
-// DiscoveredService is metadata scanned from a .plg package's info.yaml without
-// loading the service runtime.
+const catalogKVPrefix = "service/catalog/"
+
+type SystemStore interface {
+	SystemSet(ns, key string, value []byte)
+	SystemDelete(ns, key string)
+}
+
+// DiscoveredService is metadata read from info.yaml without executing service
+// code.
 type DiscoveredService struct {
 	Name            string
 	Version         string
@@ -27,19 +38,19 @@ type DiscoveredService struct {
 	PackagePath     string
 }
 
-type serviceCatalog struct {
-	kv  *KV
+type Catalog struct {
+	kv  SystemStore
 	log *slog.Logger
 }
 
-func newServiceCatalog(kv *KV, log *slog.Logger) *serviceCatalog {
+func New(kv SystemStore, log *slog.Logger) *Catalog {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &serviceCatalog{kv: kv, log: log}
+	return &Catalog{kv: kv, log: log}
 }
 
-func (c *serviceCatalog) discover(dir string) ([]DiscoveredService, error) {
+func (c *Catalog) Discover(dir string) ([]DiscoveredService, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -50,24 +61,24 @@ func (c *serviceCatalog) discover(dir string) ([]DiscoveredService, error) {
 	}
 
 	var paths []string
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".plg" {
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".plg" {
 			continue
 		}
-		paths = append(paths, filepath.Join(dir, e.Name()))
+		paths = append(paths, filepath.Join(dir, entry.Name()))
 	}
 	sort.Strings(paths)
 
 	seen := make(map[string]struct{}, len(paths))
 	out := make([]DiscoveredService, 0, len(paths))
-	for _, p := range paths {
-		info, err := readServiceInfo(p)
+	for _, path := range paths {
+		info, err := ReadInfo(path)
 		if err != nil {
-			c.log.Error("failed to scan service package", "path", p, "err", err)
+			c.log.Error("failed to scan service package", "path", path, "err", err)
 			continue
 		}
 		if _, exists := seen[info.Name]; exists {
-			c.log.Error("duplicate service name found in packages; keeping first", "name", info.Name, "path", p)
+			c.log.Error("duplicate service name found in packages; keeping first", "name", info.Name, "path", path)
 			continue
 		}
 		seen[info.Name] = struct{}{}
@@ -76,50 +87,49 @@ func (c *serviceCatalog) discover(dir string) ([]DiscoveredService, error) {
 	return out, nil
 }
 
-func (c *serviceCatalog) publish(d DiscoveredService) {
-	b, err := json.Marshal(d)
+func (c *Catalog) Publish(info DiscoveredService) {
+	data, err := json.Marshal(info)
 	if err != nil {
 		return
 	}
-	c.kv.SystemSet(SysNamespace, registryKVPrefix+"catalog/"+d.Name, b)
+	c.kv.SystemSet("sys", catalogKVPrefix+info.Name, data)
 }
 
-func (c *serviceCatalog) unpublish(name string) {
-	c.kv.SystemDelete(SysNamespace, registryKVPrefix+"catalog/"+name)
+func (c *Catalog) Unpublish(name string) {
+	c.kv.SystemDelete("sys", catalogKVPrefix+name)
 }
 
-func readServiceInfo(path string) (DiscoveredService, error) {
-	f, err := os.Open(path)
+func ReadInfo(path string) (DiscoveredService, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return DiscoveredService{}, fmt.Errorf("open service package: %w", err)
 	}
-	defer f.Close()
+	defer file.Close()
 
-	st, err := f.Stat()
+	stat, err := file.Stat()
 	if err != nil {
 		return DiscoveredService{}, fmt.Errorf("stat service package: %w", err)
 	}
-
-	zr, err := zip.NewReader(f, st.Size())
+	archive, err := zip.NewReader(file, stat.Size())
 	if err != nil {
 		return DiscoveredService{}, fmt.Errorf("read zip service package: %w", err)
 	}
 
 	var info goservice.Info
-	for _, zf := range zr.File {
-		if filepath.Clean(zf.Name) != "info.yaml" {
+	for _, entry := range archive.File {
+		if filepath.Clean(entry.Name) != "info.yaml" {
 			continue
 		}
-		r, err := zf.Open()
+		reader, err := entry.Open()
 		if err != nil {
 			return DiscoveredService{}, fmt.Errorf("open info.yaml: %w", err)
 		}
-		b, err := io.ReadAll(r)
-		_ = r.Close()
+		data, err := io.ReadAll(reader)
+		_ = reader.Close()
 		if err != nil {
 			return DiscoveredService{}, fmt.Errorf("read info.yaml: %w", err)
 		}
-		if err := yaml.Unmarshal(b, &info); err != nil {
+		if err := yaml.Unmarshal(data, &info); err != nil {
 			return DiscoveredService{}, fmt.Errorf("parse info.yaml: %w", err)
 		}
 		break
@@ -134,20 +144,16 @@ func readServiceInfo(path string) (DiscoveredService, error) {
 	if info.Type != "grpc" && info.Type != "wasm" && info.Type != "static" {
 		return DiscoveredService{}, fmt.Errorf("info.yaml Type must be static, grpc or wasm")
 	}
-	if info.ContractVersion != ContractVersion {
-		return DiscoveredService{}, fmt.Errorf("info.yaml ContractVersion must be %d", ContractVersion)
+	if info.ContractVersion != spec.ContractVersion {
+		return DiscoveredService{}, fmt.Errorf("info.yaml ContractVersion must be %d", spec.ContractVersion)
 	}
 	if info.Type != "static" && strings.TrimSpace(info.Command) == "" {
 		return DiscoveredService{}, fmt.Errorf("info.yaml Command is required")
 	}
 
 	return DiscoveredService{
-		Name:            info.Name,
-		Version:         info.Version,
-		Type:            info.Type,
-		ContractVersion: info.ContractVersion,
-		Command:         info.Command,
-		Metadata:        info.Metadata,
-		PackagePath:     path,
+		Name: info.Name, Version: info.Version, Type: info.Type,
+		ContractVersion: info.ContractVersion, Command: info.Command,
+		Metadata: info.Metadata, PackagePath: path,
 	}, nil
 }

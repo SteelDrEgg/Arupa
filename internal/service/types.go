@@ -1,173 +1,70 @@
-// Package service implements the kernel side of the Arupa service system.
+// Package service assembles and exposes the kernel service system.
 //
-// A service owns transports and routes. Transports describe how a request is
-// handled; routes only bind public names to a registered transport. WASM and
-// gRPC services share the same protobuf contract, while static services are
-// declared by manifest.yaml and registered by the kernel on their behalf.
+// Backend-neutral declarations live in spec. These aliases keep the public
+// facade compact while callers migrate independently from the implementation
+// package layout.
 package service
 
 import (
-	"context"
-	"net/http"
-
-	"arupa/internal/auth"
+	"arupa/internal/service/catalog"
+	"arupa/internal/service/spec"
+	"arupa/internal/service/supervisor"
 )
 
-type User = auth.User
-type AccessPolicy = auth.AccessPolicy
+type User = spec.User
+type AccessPolicy = spec.AccessPolicy
 
-const ContractVersion = 2
+const ContractVersion = spec.ContractVersion
 
-type TransportType string
+type TransportType = spec.TransportType
 
 const (
-	TransportStatic   TransportType = "static"
-	TransportHTTP     TransportType = "http"
-	TransportSocketIO TransportType = "socket.io"
-	TransportProxy    TransportType = "proxy"
+	TransportStatic   = spec.TransportStatic
+	TransportHTTP     = spec.TransportHTTP
+	TransportSocketIO = spec.TransportSocketIO
+	TransportProxy    = spec.TransportProxy
 )
 
-type ProxyNetwork string
+type ProxyNetwork = spec.ProxyNetwork
 
 const (
-	ProxyInherited ProxyNetwork = "inherited"
-	ProxyUnix      ProxyNetwork = "unix"
-	ProxyTCP       ProxyNetwork = "tcp"
+	ProxyInherited = spec.ProxyInherited
+	ProxyUnix      = spec.ProxyUnix
+	ProxyTCP       = spec.ProxyTCP
 )
 
-type ProxyTarget struct {
-	Network ProxyNetwork `json:"network" yaml:"network"`
-	Address string       `json:"address,omitempty" yaml:"address,omitempty"`
-	Scheme  string       `json:"scheme,omitempty" yaml:"scheme,omitempty"`
-}
+type ProxyTarget = spec.ProxyTarget
+type Transport = spec.Transport
+type HTTPRoute = spec.HTTPRoute
+type SocketIORoute = spec.SocketIORoute
+type Route = spec.Route
+type RegistrationFailure = spec.RegistrationFailure
+type RegistrationResult = spec.RegistrationResult
+type InheritedListener = spec.InheritedListener
+type RegisterResult = spec.RegisterResult
+type RegisterRequest = spec.RegisterRequest
+type HTTPRequest = spec.HTTPRequest
+type HTTPResponse = spec.HTTPResponse
+type SocketEvent = spec.SocketEvent
+type EmitInstruction = spec.EmitInstruction
+type ServiceMessage = spec.ServiceMessage
+type ParamsPatch = spec.ParamsPatch
+type ServiceRecord = spec.ServiceRecord
+type DiscoveredService = catalog.DiscoveredService
+type ServiceEntry = supervisor.ServiceEntry
+type ServiceStatus = supervisor.ServiceStatus
 
-type Transport struct {
-	ID           string        `json:"id" yaml:"id"`
-	Type         TransportType `json:"type" yaml:"type"`
-	StaticSource string        `json:"source,omitempty" yaml:"source,omitempty"`
-	Proxy        *ProxyTarget  `json:"proxy,omitempty" yaml:"proxy,omitempty"`
-}
+const (
+	ServiceStatusDiscovered = supervisor.ServiceStatusDiscovered
+	ServiceStatusStarting   = supervisor.ServiceStatusStarting
+	ServiceStatusRunning    = supervisor.ServiceStatusRunning
+	ServiceStatusDegraded   = supervisor.ServiceStatusDegraded
+	ServiceStatusStopping   = supervisor.ServiceStatusStopping
+	ServiceStatusFailed     = supervisor.ServiceStatusFailed
+)
 
-type HTTPRoute struct {
-	Method  string       `json:"method,omitempty" yaml:"method,omitempty"`
-	Pattern string       `json:"pattern" yaml:"pattern"`
-	Access  AccessPolicy `json:"access,omitempty" yaml:"access,omitempty"`
-}
-
-type SocketIORoute struct {
-	Namespace   string                  `json:"namespace" yaml:"namespace"`
-	Events      []string                `json:"events" yaml:"events"`
-	Access      AccessPolicy            `json:"access,omitempty" yaml:"access,omitempty"`
-	EventAccess map[string]AccessPolicy `json:"event_access,omitempty" yaml:"event_access,omitempty"`
-}
-
-type Route struct {
-	ID          string         `json:"id" yaml:"id"`
-	TransportID string         `json:"transport" yaml:"transport"`
-	HTTP        *HTTPRoute     `json:"http,omitempty" yaml:"http,omitempty"`
-	SocketIO    *SocketIORoute `json:"socket_io,omitempty" yaml:"socket_io,omitempty"`
-}
-
-type RegistrationFailure struct {
-	ID    string `json:"id"`
-	Error string `json:"error"`
-}
-
-type RegistrationResult struct {
-	Registered []string              `json:"registered,omitempty"`
-	Failures   []RegistrationFailure `json:"failures,omitempty"`
-	Degraded   bool                  `json:"degraded"`
-	Error      string                `json:"error,omitempty"`
-}
-
-type InheritedListener struct {
-	ID      string
-	FD      uint32
-	Network string
-	Address string
-}
-
-type RegisterResult struct {
-	Name    string
-	Version string
-}
-
-type RegisterRequest struct {
-	InstanceID   string
-	Params       map[string]string
-	Listeners    []InheritedListener
-	HostBrokerID uint32
-}
-
-type HTTPRequest struct {
-	RouteID      string
-	RoutePattern string
-	Method       string
-	Path         string
-	Query        string
-	Headers      http.Header
-	Body         []byte
-	RemoteAddr   string
-	User         *User
-}
-
-type HTTPResponse struct {
-	Status  int
-	Headers http.Header
-	Body    []byte
-}
-
-type SocketEvent struct {
-	RouteID   string
-	Namespace string
-	Event     string
-	SocketID  string
-	User      *User
-	Payload   []byte
-}
-
-type EmitInstruction struct {
-	Namespace string
-	Target    string
-	Event     string
-	Payload   []byte
-}
-
-type ServiceMessage struct {
-	Source  string
-	Target  string
-	Topic   string
-	Payload []byte
-}
-
-type ParamsPatch struct {
-	Set    map[string]string
-	Delete []string
-}
-
-type serviceConn interface {
-	Register(context.Context, RegisterRequest) (*RegisterResult, error)
-	HandleHTTP(context.Context, *HTTPRequest) (*HTTPResponse, error)
-	HandleSocketEvent(context.Context, *SocketEvent) ([]EmitInstruction, error)
-	HandleServiceMessage(context.Context, *ServiceMessage) (string, error)
-}
-
-type Emitter interface {
-	Emit(EmitInstruction) error
-}
-
-type ServiceMessageDispatcher interface {
-	DispatchServiceMessage(context.Context, ServiceMessage) (string, error)
-}
-
-type ParamsStore interface {
-	GetServiceParams(string) (map[string]string, error)
-	PatchServiceParams(string, ParamsPatch) error
-}
-
-type ResourceRegistrar interface {
-	RegisterTransport(string, Transport) error
-	UnregisterTransport(string, string) error
-	RegisterRoutes(string, []Route) RegistrationResult
-	UnregisterRoutes(string, []string) RegistrationResult
-}
+type serviceConn = spec.Conn
+type Emitter = spec.Emitter
+type ServiceMessageDispatcher = spec.MessageDispatcher
+type ParamsStore = spec.ParamsStore
+type ResourceRegistrar = spec.ResourceRegistrar

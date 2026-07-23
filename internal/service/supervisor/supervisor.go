@@ -1,4 +1,5 @@
-package service
+// Package supervisor owns service discovery state and lifecycle transitions.
+package supervisor
 
 import (
 	"context"
@@ -10,23 +11,33 @@ import (
 	"sync"
 
 	"arupa/internal/conf"
+	"arupa/internal/service/binding"
+	"arupa/internal/service/catalog"
+	"arupa/internal/service/instance"
+	"arupa/internal/service/runner"
+	"arupa/internal/service/spec"
 )
 
-type serviceRuntimeOptions struct {
-	Config    conf.ServiceSystem
-	Catalog   *serviceCatalog
-	Loader    *serviceLoader
-	Resources *transportRegistry
-	Registry  *Registry
-	Logger    *slog.Logger
+type Registry interface {
+	Add(*spec.ServiceRecord)
+	Remove(string)
 }
 
-type serviceRuntime struct {
-	catalog   *serviceCatalog
-	loader    *serviceLoader
-	resources *transportRegistry
-	registry  *Registry
-	log       *slog.Logger
+type Options struct {
+	Config   conf.ServiceSystem
+	Catalog  *catalog.Catalog
+	Loader   *runner.Loader
+	Bindings *binding.Controller
+	Registry Registry
+	Logger   *slog.Logger
+}
+
+type Supervisor struct {
+	catalog  *catalog.Catalog
+	loader   *runner.Loader
+	bindings *binding.Controller
+	registry Registry
+	log      *slog.Logger
 
 	mu       sync.RWMutex
 	config   conf.ServiceSystem
@@ -34,16 +45,16 @@ type serviceRuntime struct {
 }
 
 type serviceEntry struct {
-	info       DiscoveredService
+	info       catalog.DiscoveredService
 	config     conf.Service
 	discovered bool
-	loaded     *loadedService
+	loaded     *instance.Instance
 	status     ServiceStatus
 }
 
 // ServiceEntry is a snapshot of a service known to the manager.
 type ServiceEntry struct {
-	DiscoveredService
+	catalog.DiscoveredService
 	Config conf.Service
 	Status ServiceStatus
 }
@@ -60,19 +71,19 @@ const (
 	ServiceStatusFailed     ServiceStatus = "failed"
 )
 
-func newServiceRuntime(opts serviceRuntimeOptions) *serviceRuntime {
+func New(opts Options) *Supervisor {
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-	return &serviceRuntime{
-		catalog:   opts.Catalog,
-		loader:    opts.Loader,
-		resources: opts.Resources,
-		registry:  opts.Registry,
-		log:       log,
-		config:    opts.Config.Clone(),
-		services:  make(map[string]*serviceEntry),
+	return &Supervisor{
+		catalog:  opts.Catalog,
+		loader:   opts.Loader,
+		bindings: opts.Bindings,
+		registry: opts.Registry,
+		log:      log,
+		config:   opts.Config.Clone(),
+		services: make(map[string]*serviceEntry),
 	}
 }
 
@@ -80,7 +91,7 @@ func (e *serviceEntry) currentStatus() ServiceStatus {
 	if e == nil {
 		return ServiceStatusDiscovered
 	}
-	if e.loaded != nil && e.loaded.degraded.Load() &&
+	if e.loaded != nil && e.loaded.Degraded() &&
 		(e.status == ServiceStatusRunning || e.status == ServiceStatusDegraded) {
 		return ServiceStatusDegraded
 	}
@@ -101,13 +112,13 @@ func statusIsRunning(status ServiceStatus) bool {
 	return status == ServiceStatusRunning || status == ServiceStatusDegraded
 }
 
-func (r *serviceRuntime) Config() conf.ServiceSystem {
+func (r *Supervisor) Config() conf.ServiceSystem {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.config.Clone()
 }
 
-func (r *serviceRuntime) UpdateConfig(cfg conf.ServiceSystem) {
+func (r *Supervisor) UpdateConfig(cfg conf.ServiceSystem) {
 	cfg = cfg.Clone()
 
 	r.mu.Lock()
@@ -115,38 +126,38 @@ func (r *serviceRuntime) UpdateConfig(cfg conf.ServiceSystem) {
 	for name, entry := range r.services {
 		entry.config = cfg.EffectiveService(name)
 		if entry.loaded != nil {
-			entry.loaded.updateAccessGroups(entry.config.Allow)
+			entry.loaded.UpdateAccessGroups(entry.config.Allow)
 		}
 	}
 	r.mu.Unlock()
 }
 
-func (r *serviceRuntime) DispatchServiceMessage(ctx context.Context, msg ServiceMessage) (string, error) {
+func (r *Supervisor) DispatchServiceMessage(ctx context.Context, msg spec.ServiceMessage) (string, error) {
 	r.mu.RLock()
 	entry, ok := r.services[msg.Target]
-	var lp *loadedService
+	var lp *instance.Instance
 	if ok {
 		lp = entry.loaded
 	}
 	r.mu.RUnlock()
-	if lp == nil || lp.conn == nil {
+	if lp == nil || lp.Connection() == nil {
 		return "", fmt.Errorf("target service %q does not accept service messages", msg.Target)
 	}
-	ctx, cancel := lp.callContext(ctx)
+	ctx, cancel := lp.CallContext(ctx)
 	defer cancel()
-	return lp.conn.HandleServiceMessage(ctx, &msg)
+	return lp.Connection().HandleServiceMessage(ctx, &msg)
 }
 
-func (r *serviceRuntime) LoadConfigured() error {
+func (r *Supervisor) LoadConfigured() error {
 	if err := r.Scan(); err != nil {
 		return err
 	}
 	return r.StartConfigured()
 }
 
-func (r *serviceRuntime) Scan() error {
+func (r *Supervisor) Scan() error {
 	cfg := r.Config()
-	discovered, err := r.catalog.discover(cfg.ServiceDir)
+	discovered, err := r.catalog.Discover(cfg.ServiceDir)
 	if err != nil {
 		return err
 	}
@@ -195,18 +206,18 @@ func (r *serviceRuntime) Scan() error {
 
 	for name := range prevDiscovered {
 		if _, ok := scanned[name]; !ok {
-			r.catalog.unpublish(name)
+			r.catalog.Unpublish(name)
 		}
 	}
 	for _, entry := range next {
 		if entry.discovered {
-			r.catalog.publish(entry.info)
+			r.catalog.Publish(entry.info)
 		}
 	}
 	return nil
 }
 
-func (r *serviceRuntime) Entries() []ServiceEntry {
+func (r *Supervisor) Entries() []ServiceEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -225,16 +236,16 @@ func (r *serviceRuntime) Entries() []ServiceEntry {
 	return out
 }
 
-func (r *serviceRuntime) Discovered() []DiscoveredService {
+func (r *Supervisor) Discovered() []catalog.DiscoveredService {
 	entries := r.Entries()
-	out := make([]DiscoveredService, 0, len(entries))
+	out := make([]catalog.DiscoveredService, 0, len(entries))
 	for _, entry := range entries {
 		out = append(out, entry.DiscoveredService)
 	}
 	return out
 }
 
-func (r *serviceRuntime) StartByName(name string) (*loadedService, error) {
+func (r *Supervisor) StartByName(name string) (*instance.Instance, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("service name is required")
@@ -273,12 +284,12 @@ func (r *serviceRuntime) StartByName(name string) (*loadedService, error) {
 	return lp, nil
 }
 
-func (r *serviceRuntime) Start(name string) error {
+func (r *Supervisor) Start(name string) error {
 	_, err := r.StartByName(name)
 	return err
 }
 
-func (r *serviceRuntime) Stop(name string) error {
+func (r *Supervisor) Stop(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("service name is required")
@@ -286,7 +297,7 @@ func (r *serviceRuntime) Stop(name string) error {
 
 	r.mu.Lock()
 	entry, ok := r.services[name]
-	var lp *loadedService
+	var lp *instance.Instance
 	if ok {
 		status := entry.currentStatus()
 		if status == ServiceStatusStarting || status == ServiceStatusStopping {
@@ -315,7 +326,7 @@ func (r *serviceRuntime) Stop(name string) error {
 	return nil
 }
 
-func (r *serviceRuntime) Restart(name string) error {
+func (r *Supervisor) Restart(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("service name is required")
@@ -372,7 +383,7 @@ func (r *serviceRuntime) Restart(name string) error {
 	return nil
 }
 
-func (r *serviceRuntime) StartConfigured() error {
+func (r *Supervisor) StartConfigured() error {
 	for _, entry := range r.Entries() {
 		if !entry.Config.AutoStart() {
 			r.log.Info("service auto-start disabled by config", "name", entry.Name)
@@ -389,8 +400,8 @@ func (r *serviceRuntime) StartConfigured() error {
 	return nil
 }
 
-func (r *serviceRuntime) Load(path string) (*loadedService, error) {
-	scanned, err := readServiceInfo(path)
+func (r *Supervisor) Load(path string) (*instance.Instance, error) {
+	scanned, err := catalog.ReadInfo(path)
 	if err != nil {
 		return nil, err
 	}
@@ -430,10 +441,10 @@ func (r *serviceRuntime) Load(path string) (*loadedService, error) {
 	return lp, nil
 }
 
-func (r *serviceRuntime) loadScanned(scanned DiscoveredService, cfg conf.Service) (*loadedService, bool, error) {
-	result, err := r.loader.load(scanned, cfg)
+func (r *Supervisor) loadScanned(scanned catalog.DiscoveredService, cfg conf.Service) (*instance.Instance, bool, error) {
+	result, err := r.loader.Load(scanned, cfg)
 	if err != nil {
-		var unfaithful *unfaithfulServiceError
+		var unfaithful *runner.UnfaithfulServiceError
 		if errors.As(err, &unfaithful) {
 			r.log.Error("unfaithful service", "name", scanned.Name, "path", scanned.PackagePath, "err", err)
 		} else {
@@ -442,13 +453,13 @@ func (r *serviceRuntime) loadScanned(scanned DiscoveredService, cfg conf.Service
 		return nil, false, err
 	}
 
-	degraded := result.loaded.degraded.Load()
+	degraded := result.Loaded.Degraded()
 	r.logLoadResult(result, degraded)
-	return result.loaded, degraded, nil
+	return result.Loaded, degraded, nil
 }
 
-func (r *serviceRuntime) logLoadResult(result *serviceLoadResult, degraded bool) {
-	rec := result.loaded.snapshotRecord()
+func (r *Supervisor) logLoadResult(result *runner.LoadResult, degraded bool) {
+	rec := result.Loaded.SnapshotRecord()
 	logArgs := []any{
 		"name", rec.Name,
 		"version", rec.Version,
@@ -456,8 +467,8 @@ func (r *serviceRuntime) logLoadResult(result *serviceLoadResult, degraded bool)
 		"transports", len(rec.Transports),
 		"routes", len(rec.Routes),
 	}
-	if rec.Type == "grpc" && result.runAsUser != "" {
-		logArgs = append(logArgs, "run_as_user", result.runAsUser)
+	if rec.Type == "grpc" && result.RunAsUser != "" {
+		logArgs = append(logArgs, "run_as_user", result.RunAsUser)
 	}
 	if degraded {
 		r.log.Warn("loaded service with degraded host bindings", logArgs...)
@@ -466,7 +477,7 @@ func (r *serviceRuntime) logLoadResult(result *serviceLoadResult, degraded bool)
 	}
 }
 
-func (r *serviceRuntime) finishStartSuccess(name string, scanned DiscoveredService, cfg conf.Service, lp *loadedService, degraded bool) error {
+func (r *Supervisor) finishStartSuccess(name string, scanned catalog.DiscoveredService, cfg conf.Service, lp *instance.Instance, degraded bool) error {
 	r.mu.Lock()
 	entry, ok := r.services[name]
 	if !ok {
@@ -489,14 +500,11 @@ func (r *serviceRuntime) finishStartSuccess(name string, scanned DiscoveredServi
 	}
 	r.mu.Unlock()
 
-	r.registry.Add(lp.snapshotRecord())
-	if r.resources != nil {
-		r.resources.publish(lp)
-	}
+	r.registry.Add(lp.SnapshotRecord())
 	return nil
 }
 
-func (r *serviceRuntime) finishStartFailure(name string) {
+func (r *Supervisor) finishStartFailure(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if entry := r.services[name]; entry != nil && entry.currentStatus() == ServiceStatusStarting {
@@ -505,7 +513,7 @@ func (r *serviceRuntime) finishStartFailure(name string) {
 	}
 }
 
-func (r *serviceRuntime) finishStop(name string, status ServiceStatus) {
+func (r *Supervisor) finishStop(name string, status ServiceStatus) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if entry := r.services[name]; entry != nil && entry.currentStatus() == ServiceStatusStopping {
@@ -514,24 +522,24 @@ func (r *serviceRuntime) finishStop(name string, status ServiceStatus) {
 	}
 }
 
-func (r *serviceRuntime) cleanupLoaded(name string, lp *loadedService) error {
+func (r *Supervisor) cleanupLoaded(name string, lp *instance.Instance) error {
 	if lp == nil {
 		return nil
 	}
-	if r.resources != nil {
-		r.resources.detach(name)
+	lp.Cancel()
+	lp.Revoke()
+	if r.bindings != nil {
+		r.bindings.Detach(name)
 	}
-	lp.cancelLifecycle()
-	r.loader.revoke(lp)
-	if r.registry != nil && lp.record != nil {
-		r.registry.Remove(lp.record.InstanceID)
+	if r.registry != nil {
+		r.registry.Remove(lp.InstanceID())
 	}
-	return r.loader.unload(lp)
+	return lp.Close()
 }
 
-func (r *serviceRuntime) Close() error {
+func (r *Supervisor) Close() error {
 	r.mu.Lock()
-	services := make([]*loadedService, 0, len(r.services))
+	services := make([]*instance.Instance, 0, len(r.services))
 	for _, entry := range r.services {
 		if entry.loaded != nil {
 			services = append(services, entry.loaded)
@@ -544,7 +552,7 @@ func (r *serviceRuntime) Close() error {
 	r.mu.Unlock()
 
 	for _, lp := range services {
-		name := loadedServiceInstanceID(lp)
+		name := instanceID(lp)
 		if err := r.cleanupLoaded(name, lp); err != nil {
 			r.log.Error("failed to unload service", "service", name, "err", err)
 			r.finishStop(name, ServiceStatusFailed)
@@ -555,9 +563,9 @@ func (r *serviceRuntime) Close() error {
 	return nil
 }
 
-func loadedServiceInstanceID(lp *loadedService) string {
-	if lp == nil || lp.record == nil {
+func instanceID(running *instance.Instance) string {
+	if running == nil {
 		return ""
 	}
-	return lp.record.InstanceID
+	return running.InstanceID()
 }

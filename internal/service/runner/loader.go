@@ -1,4 +1,5 @@
-package service
+// Package runner starts service runtimes and owns backend-specific resources.
+package runner
 
 import (
 	"context"
@@ -10,12 +11,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"arupa/internal/auth"
 	"arupa/internal/conf"
+	adaptergrpc "arupa/internal/service/adapter/grpc"
+	adapterwasm "arupa/internal/service/adapter/wasm"
+	"arupa/internal/service/binding"
+	"arupa/internal/service/catalog"
+	"arupa/internal/service/host"
+	"arupa/internal/service/instance"
+	"arupa/internal/service/spec"
 	grpcpb "arupa/servicesdk/grpc/proto"
 	wasmpb "arupa/servicesdk/wasm/proto"
 
@@ -25,7 +31,7 @@ import (
 
 // handshake is shared with gRPC services. Services must use the same values.
 var handshake = goservice.HandshakeConfig{
-	ProtocolVersion:  ContractVersion,
+	ProtocolVersion:  spec.ContractVersion,
 	MagicCookieKey:   "ARUPA_SERVICE",
 	MagicCookieValue: "arupa-service-v2",
 }
@@ -34,59 +40,41 @@ var handshake = goservice.HandshakeConfig{
 // registration.
 const defaultRegisterTimeout = 15 * time.Second
 
-type serviceLoaderOptions struct {
-	TempDir   string
-	API       *HostAPI
-	Resources *transportRegistry
+type Options struct {
+	TempDir  string
+	API      *host.API
+	Bindings *binding.Controller
 	// RegisterTimeout bounds Register calls while loading services. A zero value
 	// uses defaultRegisterTimeout; a negative value disables the timeout.
 	RegisterTimeout time.Duration
 }
 
-type serviceLoader struct {
+type Loader struct {
 	tempDir         string
-	api             *HostAPI
-	resources       *transportRegistry
+	api             *host.API
+	bindings        *binding.Controller
 	registerTimeout time.Duration
 }
 
-type serviceLoadResult struct {
-	loaded    *loadedService
-	rootPath  string
-	runAsUser string
+type LoadResult struct {
+	Loaded    *instance.Instance
+	RootPath  string
+	RunAsUser string
 }
 
-type loadedService struct {
-	loader         *goservice.Manager
-	handle         *goservice.Handle
-	conn           serviceConn
-	record         *ServiceRecord
-	recordMu       sync.Mutex
-	publishMu      sync.Mutex
-	hostBrokerStop func()
-	accessMu       sync.RWMutex
-	access         auth.AccessPolicy
-	// lifecycle is canceled when the host stops or replaces this loaded service.
-	lifecycle  context.Context
-	cancel     context.CancelFunc
-	runtimeDir string
-	cleanupDir string
-	degraded   atomic.Bool
-}
-
-func newServiceLoader(opts serviceLoaderOptions) (*serviceLoader, error) {
+func New(opts Options) (*Loader, error) {
 	registerTimeout := opts.RegisterTimeout
 	if registerTimeout == 0 {
 		registerTimeout = defaultRegisterTimeout
 	}
-	l := &serviceLoader{
+	l := &Loader{
 		tempDir:         opts.TempDir,
 		api:             opts.API,
-		resources:       opts.Resources,
+		bindings:        opts.Bindings,
 		registerTimeout: registerTimeout,
 	}
-	if l.resources == nil {
-		return nil, fmt.Errorf("resource registry is required")
+	if l.bindings == nil {
+		return nil, fmt.Errorf("binding controller is required")
 	}
 	if l.api == nil {
 		return nil, fmt.Errorf("host API is required")
@@ -94,7 +82,7 @@ func newServiceLoader(opts serviceLoaderOptions) (*serviceLoader, error) {
 	return l, nil
 }
 
-func (l *serviceLoader) load(scanned DiscoveredService, cfg conf.Service) (*serviceLoadResult, error) {
+func (l *Loader) Load(scanned catalog.DiscoveredService, cfg conf.Service) (*LoadResult, error) {
 	if scanned.Type == "static" {
 		return l.loadStatic(scanned, cfg)
 	}
@@ -152,43 +140,57 @@ func (l *serviceLoader) load(scanned DiscoveredService, cfg conf.Service) (*serv
 		return nil, fmt.Errorf("service package name changed from %q to %q while loading", scanned.Name, instanceID)
 	}
 
-	record := &ServiceRecord{
+	record := &spec.ServiceRecord{
 		InstanceID: instanceID, Name: info.Name, Version: info.Version,
 		Type: info.Type, Path: scanned.PackagePath,
 	}
-	lifecycle, cancelLifecycle := context.WithCancel(context.Background())
-	lp := &loadedService{
-		loader: loader, handle: handle, conn: conn, record: record,
-		access:    auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
-		lifecycle: lifecycle, cancel: cancelLifecycle, runtimeDir: inherited.runtimeDir,
-	}
+	var stopHostBroker func()
+	lp := instance.New(instance.Options{
+		Connection: conn,
+		Record:     record,
+		Access:     auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
+		CloseBackend: func() error {
+			return loader.Unload(handle)
+		},
+		StopHostBroker: func() {
+			if stopHostBroker != nil {
+				stopHostBroker()
+			}
+		},
+		CleanupDirs: []string{inherited.runtimeDir},
+	})
 	inheritedPaths := map[string]string{}
-	req := RegisterRequest{InstanceID: instanceID, Params: cfg.Params}
+	req := spec.RegisterRequest{InstanceID: instanceID, Params: cfg.Params}
 	if inherited.path != "" {
 		inheritedPaths["proxy"] = inherited.path
-		req.Listeners = []InheritedListener{{
+		req.Listeners = []spec.InheritedListener{{
 			ID: "proxy", FD: inherited.fd, Network: "unix", Address: inherited.path,
 		}}
 	}
-	l.resources.attach(instanceID, lp, handle.RootPath(), inheritedPaths)
+	if err := l.bindings.Attach(instanceID, lp, handle.RootPath(), inheritedPaths); err != nil {
+		lp.Cancel()
+		_ = lp.Close()
+		inherited.cleanup()
+		return nil, err
+	}
 	if info.Type == "grpc" {
-		grpcConnection, ok := conn.(grpcConn)
+		grpcConnection, ok := conn.(adaptergrpc.Conn)
 		if !ok {
-			l.resources.detach(instanceID)
-			cancelLifecycle()
-			_ = loader.Unload(handle)
+			l.bindings.Detach(instanceID)
+			lp.Cancel()
+			_ = lp.Close()
 			inherited.cleanup()
 			return nil, fmt.Errorf("gRPC service connection has no broker")
 		}
-		brokerID, stopBroker, err := startGRPCHostBroker(grpcConnection.broker, l.api, instanceID)
+		brokerID, stopBroker, err := adaptergrpc.StartHostBroker(grpcConnection.Broker(), l.api, instanceID)
 		if err != nil {
-			cancelLifecycle()
-			_ = loader.Unload(handle)
-			l.resources.detach(instanceID)
+			l.bindings.Detach(instanceID)
+			lp.Cancel()
+			_ = lp.Close()
 			inherited.cleanup()
 			return nil, fmt.Errorf("start host broker: %w", err)
 		}
-		lp.hostBrokerStop = stopBroker
+		stopHostBroker = stopBroker
 		req.HostBrokerID = brokerID
 	}
 
@@ -196,31 +198,24 @@ func (l *serviceLoader) load(scanned DiscoveredService, cfg conf.Service) (*serv
 	reg, err := conn.Register(registerCtx, req)
 	cancelRegister()
 	if err != nil {
-		if lp.hostBrokerStop != nil {
-			lp.hostBrokerStop()
-		}
-		l.resources.detach(instanceID)
-		cancelLifecycle()
-		_ = loader.Unload(handle)
+		lp.Revoke()
+		l.bindings.Detach(instanceID)
+		lp.Cancel()
+		_ = lp.Close()
 		inherited.cleanup()
 		return nil, fmt.Errorf("register service %q: %w", instanceID, err)
 	}
 	if err := validateRegisterResultIdentity(info, reg); err != nil {
-		if lp.hostBrokerStop != nil {
-			lp.hostBrokerStop()
-		}
-		l.resources.detach(instanceID)
-		cancelLifecycle()
-		_ = loader.Unload(handle)
+		lp.Revoke()
+		l.bindings.Detach(instanceID)
+		lp.Cancel()
+		_ = lp.Close()
 		inherited.cleanup()
 		return nil, err
 	}
-	lp.recordMu.Lock()
-	lp.record.Name = reg.Name
-	lp.record.Version = reg.Version
-	lp.recordMu.Unlock()
-	return &serviceLoadResult{
-		loaded: lp, rootPath: handle.RootPath(), runAsUser: runAsUser,
+	lp.UpdateIdentity(reg.Name, reg.Version)
+	return &LoadResult{
+		Loaded: lp, RootPath: handle.RootPath(), RunAsUser: runAsUser,
 	}, nil
 }
 
@@ -252,31 +247,17 @@ func verifyPackageChecksum(path string, cfg conf.Service) error {
 	return nil
 }
 
-func (lp *loadedService) accessPolicy() auth.AccessPolicy {
-	lp.accessMu.RLock()
-	defer lp.accessMu.RUnlock()
-	return auth.AccessPolicy{
-		Groups: append([]string(nil), lp.access.Groups...),
-	}
-}
-
-func (lp *loadedService) updateAccessGroups(groups []string) {
-	lp.accessMu.Lock()
-	lp.access.Groups = append([]string(nil), groups...)
-	lp.accessMu.Unlock()
-}
-
-type unfaithfulServiceError struct {
+type UnfaithfulServiceError struct {
 	reason string
 }
 
-func (e *unfaithfulServiceError) Error() string {
+func (e *UnfaithfulServiceError) Error() string {
 	return e.reason
 }
 
-func validateRegisterResultIdentity(info goservice.Info, reg *RegisterResult) error {
+func validateRegisterResultIdentity(info goservice.Info, reg *spec.RegisterResult) error {
 	if reg == nil {
-		return &unfaithfulServiceError{reason: "RegisterReply is nil"}
+		return &UnfaithfulServiceError{reason: "RegisterReply is nil"}
 	}
 
 	var mismatches []string
@@ -289,20 +270,20 @@ func validateRegisterResultIdentity(info goservice.Info, reg *RegisterResult) er
 	if len(mismatches) == 0 {
 		return nil
 	}
-	return &unfaithfulServiceError{
+	return &UnfaithfulServiceError{
 		reason: "info.yaml and RegisterReply mismatch: " + strings.Join(mismatches, ", "),
 	}
 }
 
 // registerContext returns the host control-plane context used for Register.
-func (l *serviceLoader) registerContext() (context.Context, context.CancelFunc) {
+func (l *Loader) registerContext() (context.Context, context.CancelFunc) {
 	if l.registerTimeout <= 0 {
 		return context.Background(), func() {}
 	}
 	return context.WithTimeout(context.Background(), l.registerTimeout)
 }
 
-func (l *serviceLoader) newInner(runAsUser string, override func(*goservice.ClientConfig)) (*goservice.Manager, error) {
+func (l *Loader) newInner(runAsUser string, override func(*goservice.ClientConfig)) (*goservice.Manager, error) {
 	return goservice.NewManager(goservice.Config{
 		TempDir: l.tempDir,
 		GRPC: &goservice.GRPCConfig{
@@ -313,7 +294,7 @@ func (l *serviceLoader) newInner(runAsUser string, override func(*goservice.Clie
 			SyncStderr:           os.Stderr,
 			ClientConfigOverride: override,
 			LoaderWithBroker: func(_ context.Context, broker *goservice.GRPCBroker, c *grpc.ClientConn) (any, error) {
-				return grpcConn{client: grpcpb.NewServiceClient(c), broker: broker}, nil
+				return adaptergrpc.NewConn(grpcpb.NewServiceClient(c), broker), nil
 			},
 		},
 		WASM: &goservice.WASMConfig{
@@ -325,7 +306,7 @@ func (l *serviceLoader) newInner(runAsUser string, override func(*goservice.Clie
 	})
 }
 
-func (l *serviceLoader) wasmLoader(ctx context.Context, modulePath string, info goservice.Info, clientConfig *goservice.WASMClientConfig) (any, func(context.Context) error, error) {
+func (l *Loader) wasmLoader(ctx context.Context, modulePath string, info goservice.Info, clientConfig *goservice.WASMClientConfig) (any, func(context.Context) error, error) {
 	loader, err := wasmpb.NewServicePlugin(
 		ctx,
 		wasmpb.WazeroRuntime(clientConfig.NewRuntime),
@@ -334,23 +315,23 @@ func (l *serviceLoader) wasmLoader(ctx context.Context, modulePath string, info 
 	if err != nil {
 		return nil, nil, fmt.Errorf("new wasm loader: %w", err)
 	}
-	client, err := loader.Load(ctx, modulePath, wasmHostFns{api: l.api, source: info.Name})
+	client, err := loader.Load(ctx, modulePath, adapterwasm.NewHostFunctions(l.api, info.Name))
 	if err != nil {
 		return nil, nil, fmt.Errorf("load wasm module: %w", err)
 	}
 	return client, func(ctx context.Context) error { return client.Close(ctx) }, nil
 }
 
-func (l *serviceLoader) connFor(serviceType string, client any) (serviceConn, error) {
+func (l *Loader) connFor(serviceType string, client any) (spec.Conn, error) {
 	switch serviceType {
 	case "wasm":
 		pc, ok := client.(wasmpb.Service)
 		if !ok {
 			return nil, fmt.Errorf("unexpected wasm service client type %T", client)
 		}
-		return newWASMConn(pc), nil
+		return adapterwasm.NewConn(pc), nil
 	case "grpc":
-		pc, ok := client.(grpcConn)
+		pc, ok := client.(adaptergrpc.Conn)
 		if !ok {
 			return nil, fmt.Errorf("unexpected grpc service client type %T", client)
 		}
@@ -358,33 +339,6 @@ func (l *serviceLoader) connFor(serviceType string, client any) (serviceConn, er
 	default:
 		return nil, fmt.Errorf("unsupported service type %q", serviceType)
 	}
-}
-
-func (l *serviceLoader) revoke(lp *loadedService) {
-	if lp != nil && lp.hostBrokerStop != nil {
-		lp.hostBrokerStop()
-	}
-}
-
-func (l *serviceLoader) unload(lp *loadedService) error {
-	if lp == nil {
-		return nil
-	}
-	var err error
-	if lp.loader != nil && lp.handle != nil {
-		err = lp.loader.Unload(lp.handle)
-	}
-	if lp.runtimeDir != "" {
-		if cleanupErr := os.RemoveAll(lp.runtimeDir); err == nil {
-			err = cleanupErr
-		}
-	}
-	if lp.cleanupDir != "" {
-		if cleanupErr := os.RemoveAll(lp.cleanupDir); err == nil {
-			err = cleanupErr
-		}
-	}
-	return err
 }
 
 type inheritedProxy struct {
@@ -467,81 +421,4 @@ func (p *inheritedProxy) cleanup() {
 	if p.runtimeDir != "" {
 		_ = os.RemoveAll(p.runtimeDir)
 	}
-}
-
-// callContext returns a call context tied to this loaded service's lifetime.
-func (lp *loadedService) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if lp == nil {
-		return mergeServiceContext(ctx, nil)
-	}
-	return mergeServiceContext(ctx, lp.lifecycle)
-}
-
-// eventContext returns the host-side context for service events that do not have a
-// natural parent request context.
-func (lp *loadedService) eventContext() (context.Context, context.CancelFunc) {
-	return lp.callContext(context.Background())
-}
-
-// cancelLifecycle cancels in-flight and future host calls associated with this
-// loaded service.
-func (lp *loadedService) cancelLifecycle() {
-	if lp != nil && lp.cancel != nil {
-		lp.cancel()
-	}
-}
-
-func (lp *loadedService) addTransport(transport Transport) {
-	if lp == nil || lp.record == nil {
-		return
-	}
-	lp.recordMu.Lock()
-	lp.record.Transports = append(lp.record.Transports, transport)
-	lp.recordMu.Unlock()
-}
-
-func (lp *loadedService) removeTransport(id string) {
-	if lp == nil || lp.record == nil {
-		return
-	}
-	lp.recordMu.Lock()
-	defer lp.recordMu.Unlock()
-	for index, transport := range lp.record.Transports {
-		if transport.ID == id {
-			lp.record.Transports = append(lp.record.Transports[:index], lp.record.Transports[index+1:]...)
-			return
-		}
-	}
-}
-
-func (lp *loadedService) addRoute(route Route) {
-	if lp == nil || lp.record == nil {
-		return
-	}
-	lp.recordMu.Lock()
-	lp.record.Routes = append(lp.record.Routes, route)
-	lp.recordMu.Unlock()
-}
-
-func (lp *loadedService) removeRoute(id string) {
-	if lp == nil || lp.record == nil {
-		return
-	}
-	lp.recordMu.Lock()
-	defer lp.recordMu.Unlock()
-	for index, route := range lp.record.Routes {
-		if route.ID == id {
-			lp.record.Routes = append(lp.record.Routes[:index], lp.record.Routes[index+1:]...)
-			return
-		}
-	}
-}
-
-func (lp *loadedService) snapshotRecord() *ServiceRecord {
-	if lp == nil || lp.record == nil {
-		return nil
-	}
-	lp.recordMu.Lock()
-	defer lp.recordMu.Unlock()
-	return cloneServiceRecord(lp.record)
 }

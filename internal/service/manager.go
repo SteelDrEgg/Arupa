@@ -10,6 +10,14 @@ import (
 
 	"arupa/internal/conf"
 	"arupa/internal/netx"
+	"arupa/internal/service/binding"
+	"arupa/internal/service/catalog"
+	"arupa/internal/service/route"
+	"arupa/internal/service/runner"
+	"arupa/internal/service/socketio"
+	"arupa/internal/service/spec"
+	"arupa/internal/service/supervisor"
+	"arupa/internal/service/transport"
 )
 
 // Options configures a Manager.
@@ -33,12 +41,12 @@ type Options struct {
 // backend loading, lifecycle state, and HTTP/static/socket registration. Keep
 // this type boring; it is the object other packages depend on.
 type Manager struct {
-	kv        *KV
-	registry  *Registry
-	routes    *routeRegistry
-	resources *transportRegistry
+	kv       *KV
+	registry *Registry
+	routes   *route.Registry
+	bindings *binding.Controller
 
-	runtime *serviceRuntime
+	runtime *supervisor.Supervisor
 }
 
 // NewManager builds a service manager and registers its HTTP dispatcher.
@@ -68,32 +76,38 @@ func NewManager(opts Options) (*Manager, error) {
 
 	kv := NewKV()
 	registry := NewRegistry(kv)
-	socketBridge := newSocketBridge(opts.Socket, logger)
-	resources := newTransportRegistry(registry)
-	routes := newRouteRegistry(resources, socketBridge)
-	if err := routes.reserve("kernel", opts.ReservedHTTP...); err != nil {
+	socketBridge := socketio.New(opts.Socket, logger)
+	transports := transport.NewRegistry()
+	routes := route.NewRegistry(transports, socketBridge)
+	if err := routes.Reserve("kernel", opts.ReservedHTTP...); err != nil {
 		return nil, err
 	}
+	bindings := binding.NewController(transports, routes, func(owner spec.BindingOwner) {
+		record := owner.SnapshotRecord()
+		if record != nil && registry.Has(record.InstanceID) {
+			registry.Add(record)
+		}
+	})
 	api := NewHostAPI(kv, socketBridge, logger)
-	api.SetResourceRegistrar(resources)
-	loader, err := newServiceLoader(serviceLoaderOptions{
-		TempDir: cfg.ServiceTempDir, API: api, Resources: resources,
+	api.SetResourceRegistrar(bindings)
+	loader, err := runner.New(runner.Options{
+		TempDir: cfg.ServiceTempDir, API: api, Bindings: bindings,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	runtime := newServiceRuntime(serviceRuntimeOptions{
-		Config: cfg, Catalog: newServiceCatalog(kv, managerLog),
-		Loader: loader, Resources: resources, Registry: registry, Logger: managerLog,
+	runtime := supervisor.New(supervisor.Options{
+		Config: cfg, Catalog: catalog.New(kv, managerLog),
+		Loader: loader, Bindings: bindings, Registry: registry, Logger: managerLog,
 	})
 
 	m := &Manager{
-		kv:        kv,
-		registry:  registry,
-		routes:    routes,
-		resources: resources,
-		runtime:   runtime,
+		kv:       kv,
+		registry: registry,
+		routes:   routes,
+		bindings: bindings,
+		runtime:  runtime,
 	}
 	api.SetMessageDispatcher(m)
 	api.SetParamsStore(m)
@@ -180,9 +194,14 @@ func (m *Manager) Discovered() []DiscoveredService {
 	return m.runtime.Discovered()
 }
 
-// StartByName starts a previously scanned service by name.
-func (m *Manager) StartByName(name string) (*loadedService, error) {
-	return m.runtime.StartByName(name)
+// StartByName starts a previously scanned service and returns its public
+// runtime projection, never the backend instance handle.
+func (m *Manager) StartByName(name string) (*ServiceRecord, error) {
+	running, err := m.runtime.StartByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return running.SnapshotRecord(), nil
 }
 
 // Start starts a previously scanned service by name.
@@ -209,8 +228,12 @@ func (m *Manager) StartConfigured() error {
 }
 
 // Load extracts, loads, registers and wires a single service package.
-func (m *Manager) Load(path string) (*loadedService, error) {
-	return m.runtime.Load(path)
+func (m *Manager) Load(path string) (*ServiceRecord, error) {
+	running, err := m.runtime.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return running.SnapshotRecord(), nil
 }
 
 // ServeHTTP dispatches requests that did not match host routes to the current

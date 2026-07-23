@@ -1,9 +1,8 @@
-package service
+package runner
 
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +11,9 @@ import (
 
 	"arupa/internal/auth"
 	"arupa/internal/conf"
+	"arupa/internal/service/catalog"
+	"arupa/internal/service/instance"
+	"arupa/internal/service/spec"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,12 +21,12 @@ import (
 const manifestVersion = 1
 
 type Manifest struct {
-	Version    int         `yaml:"version"`
-	Transports []Transport `yaml:"transports"`
-	Routes     []Route     `yaml:"routes"`
+	Version    int              `yaml:"version"`
+	Transports []spec.Transport `yaml:"transports"`
+	Routes     []spec.Route     `yaml:"routes"`
 }
 
-func (l *serviceLoader) loadStatic(scanned DiscoveredService, cfg conf.Service) (*serviceLoadResult, error) {
+func (l *Loader) loadStatic(scanned catalog.DiscoveredService, cfg conf.Service) (*LoadResult, error) {
 	if err := verifyPackageChecksum(scanned.PackagePath, cfg); err != nil {
 		return nil, fmt.Errorf("verify service %q package checksum: %w", scanned.Name, err)
 	}
@@ -44,28 +46,31 @@ func (l *serviceLoader) loadStatic(scanned DiscoveredService, cfg conf.Service) 
 		return nil, fmt.Errorf("static service Content directory: %w", err)
 	}
 
-	lifecycle, cancel := context.WithCancel(context.Background())
-	loaded := &loadedService{
-		record: &ServiceRecord{
+	loaded := instance.New(instance.Options{
+		Record: &spec.ServiceRecord{
 			InstanceID: scanned.Name, Name: scanned.Name, Version: scanned.Version,
 			Type: scanned.Type, Path: scanned.PackagePath,
 		},
-		access:    auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
-		lifecycle: lifecycle, cancel: cancel, cleanupDir: root,
+		Access:      auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
+		CleanupDirs: []string{root},
+	})
+	if err := l.bindings.Attach(scanned.Name, loaded, contentRoot, nil); err != nil {
+		loaded.Cancel()
+		cleanup()
+		return nil, err
 	}
-	l.resources.attach(scanned.Name, loaded, contentRoot, nil)
 
 	for _, transport := range manifest.Transports {
-		if err := l.resources.RegisterTransport(scanned.Name, transport); err != nil {
-			loaded.degraded.Store(true)
+		if err := l.bindings.RegisterTransport(scanned.Name, transport); err != nil {
+			loaded.MarkDegraded()
 			continue
 		}
 	}
-	result := l.resources.RegisterRoutes(scanned.Name, manifest.Routes)
+	result := l.bindings.RegisterRoutes(scanned.Name, manifest.Routes)
 	if result.Degraded {
-		loaded.degraded.Store(true)
+		loaded.MarkDegraded()
 	}
-	return &serviceLoadResult{loaded: loaded, rootPath: contentRoot}, nil
+	return &LoadResult{Loaded: loaded, RootPath: contentRoot}, nil
 }
 
 func readManifest(path string) (Manifest, error) {
