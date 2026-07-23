@@ -1,4 +1,4 @@
-package plugin
+package service
 
 import (
 	"fmt"
@@ -6,14 +6,14 @@ import (
 	"sync"
 )
 
-// SysNamespace holds host-managed, plugin-read-only state such as the plugin
-// registry. Plugins may read it but cannot write to it.
+// SysNamespace holds host-managed, service-read-only state such as the service
+// registry. Services may read it but cannot write to it.
 const SysNamespace = "sys"
 
-// KV is an in-memory key-value store shared by all plugins.
+// KV is an in-memory key-value store shared by all services.
 //
-// Layout is namespace -> key -> value. Every plugin gets its own namespace by
-// convention but any plugin may read or write any namespace, except read-only
+// Layout is namespace -> key -> value. Every service gets its own namespace by
+// convention but any service may read or write any namespace, except read-only
 // namespaces (e.g. "sys") which only the host can modify. Values are raw bytes
 // and are cleared on restart.
 type KV struct {

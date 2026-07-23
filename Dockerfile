@@ -22,7 +22,7 @@ FROM alpine:3.22
 RUN apk add --no-cache ca-certificates \
     && addgroup -S arupa \
     && adduser -S -G arupa -h /data arupa \
-    && mkdir -p /data/plugins /data/tmp \
+    && mkdir -p /data/services /data/tmp \
     && chown -R arupa:arupa /data
 
 COPY --from=build /out/arupa /usr/local/bin/arupa

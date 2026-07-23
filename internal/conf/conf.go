@@ -29,9 +29,9 @@ func defaultConfig() Config {
 			Level:  "info",
 		},
 		Auth: Auth{},
-		PluginSystem: PluginSystem{
-			PluginDir:     "plugins",
-			PluginTempDir: "tmp",
+		ServiceSystem: ServiceSystem{
+			ServiceDir:     "services",
+			ServiceTempDir: "tmp",
 		},
 	}
 }
@@ -78,7 +78,7 @@ func Update() (err error) {
 	if err := validateLog(next.Log); err != nil {
 		return err
 	}
-	if err := validatePluginChecksums(next.PluginSystem.Plugins); err != nil {
+	if err := validateServiceChecksums(next.ServiceSystem.Services); err != nil {
 		return err
 	}
 	Conf = next
@@ -97,7 +97,7 @@ func writeLocked(conf Config) (err error) {
 	if err := validateRouteAllow(conf.Route.Allow); err != nil {
 		return err
 	}
-	if err := validatePluginChecksums(conf.PluginSystem.Plugins); err != nil {
+	if err := validateServiceChecksums(conf.ServiceSystem.Services); err != nil {
 		return err
 	}
 
@@ -152,7 +152,7 @@ func cloneConfig(cfg Config) Config {
 		Route: RouteConfig{
 			Allow: cloneRouteAllow(cfg.Route.Allow),
 		},
-		PluginSystem: cfg.PluginSystem.Clone(),
+		ServiceSystem: cfg.ServiceSystem.Clone(),
 	}
 
 	for k, v := range cfg.Auth.Users {
@@ -185,10 +185,10 @@ func validateLog(logCfg LogConfig) error {
 	return nil
 }
 
-func validatePluginChecksums(plugins map[string]Plugin) error {
-	for name, plugin := range plugins {
-		if _, _, err := plugin.SHA256Checksum(); err != nil {
-			return fmt.Errorf("invalid Plugins.%s.Checksum: %w", name, err)
+func validateServiceChecksums(services map[string]Service) error {
+	for name, service := range services {
+		if _, _, err := service.SHA256Checksum(); err != nil {
+			return fmt.Errorf("invalid Services.%s.Checksum: %w", name, err)
 		}
 	}
 	return nil
@@ -213,11 +213,11 @@ func GetGroups() map[string][]string {
 	return cloneGroups(Conf.Auth.Groups)
 }
 
-// GetPluginSystem returns the plugin-system config in a thread-safe manner.
-func GetPluginSystem() PluginSystem {
+// GetServiceSystem returns the service-system config in a thread-safe manner.
+func GetServiceSystem() ServiceSystem {
 	mu.RLock()
 	defer mu.RUnlock()
-	return Conf.PluginSystem.Clone()
+	return Conf.ServiceSystem.Clone()
 }
 
 // GetRouteAllow returns a deep copy of the current host-level route rules.
@@ -249,21 +249,21 @@ func cloneRouteAllow(allow map[string][]string) map[string][]string {
 	return out
 }
 
-// SetPluginPaths updates plugin package and temp directories and persists them.
-func SetPluginPaths(pluginDir, pluginTempDir string) (Config, error) {
-	pluginDir = strings.TrimSpace(pluginDir)
-	pluginTempDir = strings.TrimSpace(pluginTempDir)
+// SetServicePaths updates service package and temp directories and persists them.
+func SetServicePaths(serviceDir, serviceTempDir string) (Config, error) {
+	serviceDir = strings.TrimSpace(serviceDir)
+	serviceTempDir = strings.TrimSpace(serviceTempDir)
 
-	if pluginDir == "" {
-		return Config{}, fmt.Errorf("plugin directory cannot be empty")
+	if serviceDir == "" {
+		return Config{}, fmt.Errorf("service directory cannot be empty")
 	}
-	if pluginTempDir == "" {
-		return Config{}, fmt.Errorf("plugin temp directory cannot be empty")
+	if serviceTempDir == "" {
+		return Config{}, fmt.Errorf("service temp directory cannot be empty")
 	}
 
 	next := Read()
-	next.PluginSystem.PluginDir = pluginDir
-	next.PluginSystem.PluginTempDir = pluginTempDir
+	next.ServiceSystem.ServiceDir = serviceDir
+	next.ServiceSystem.ServiceTempDir = serviceTempDir
 
 	if err := Write(next); err != nil {
 		return Config{}, err

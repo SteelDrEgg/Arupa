@@ -17,16 +17,16 @@ tools:
 proto: proto-grpc proto-wasm
 
 proto-grpc:
-	mkdir -p pluginsdk/grpc
+	mkdir -p servicesdk/grpc
 	PATH="$(GOBIN):$(PATH)" protoc -I. \
-		--go_out=./pluginsdk/grpc --go_opt=paths=source_relative \
-		--go-grpc_out=./pluginsdk/grpc --go-grpc_opt=paths=source_relative \
+		--go_out=./servicesdk/grpc --go_opt=paths=source_relative \
+		--go-grpc_out=./servicesdk/grpc --go-grpc_opt=paths=source_relative \
 		./proto/panel.proto
 
 proto-wasm:
-	mkdir -p pluginsdk/wasm
+	mkdir -p servicesdk/wasm
 	protoc --plugin=protoc-gen-go-plugin=$(PROTOC_GEN_GO_PLUGIN) -I. \
-		--go-plugin_out=./pluginsdk/wasm --go-plugin_opt=paths=source_relative \
+		--go-plugin_out=./servicesdk/wasm --go-plugin_opt=paths=source_relative \
 		./proto/panel.proto
 
 ## build: build the host server binary

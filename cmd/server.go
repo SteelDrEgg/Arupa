@@ -14,7 +14,7 @@ import (
 	"arupa/internal/auth"
 	"arupa/internal/conf"
 	"arupa/internal/netx"
-	"arupa/internal/plugin"
+	"arupa/internal/service"
 	"arupa/internal/web"
 )
 
@@ -22,37 +22,44 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	serverLog := logger.With("component", "kernel", "from", "server")
 	mux := http.NewServeMux()
 
-	// Socket.IO server (plugins attach their own namespaces).
+	// Socket.IO server (services attach their own namespaces).
 	socketServer := netx.GetGlobalServer()
 	mux.Handle("/socket.io/", socketServer.Handler())
-	// Keep auth endpoints so protected plugin routes/events can be used.
+	// Keep auth endpoints so protected service routes/events can be used.
 	web.StartLogin(mux)
 
-	pm, err := plugin.NewManager(plugin.Options{
-		Config: cfg.PluginSystem,
+	sm, err := service.NewManager(service.Options{
+		Config: cfg.ServiceSystem,
 		Mux:    mux,
 		Socket: socketServer,
 		Logger: logger,
+		ReservedHTTP: []string{
+			"/socket.io/",
+			"/api/login", "/api/logout", "/api/check-auth",
+			"/api/services", "/api/services/scan", "/api/services/start",
+			"/api/services/stop", "/api/services/restart", "/api/services/config",
+			"/api/kernel/version", "/api/kernel/reload",
+		},
 	})
 	if err != nil {
 		return err
 	}
-	defer pm.Close()
-	web.StartPlugin(mux, pm)
+	defer sm.Close()
+	web.StartService(mux, sm)
 
 	reloadConfig := func() error {
 		if err := conf.Update(); err != nil {
 			return err
 		}
-		pm.UpdateConfig(conf.GetPluginSystem())
+		sm.UpdateConfig(conf.GetServiceSystem())
 		return nil
 	}
 	web.StartKernel(mux, version, reloadConfig)
 
-	if err := pm.LoadConfigured(); err != nil {
-		serverLog.Error("failed to start configured plugins", "err", err)
+	if err := sm.LoadConfigured(); err != nil {
+		serverLog.Error("failed to start configured services", "err", err)
 	}
-	for _, entry := range pm.Entries() {
+	for _, entry := range sm.Entries() {
 		logArgs := []any{
 			"name", entry.Name,
 			"version", entry.Version,
@@ -64,7 +71,7 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		if entry.Type == "grpc" {
 			logArgs = append(logArgs, "run_as_user", entry.Config.RunAsUser)
 		}
-		serverLog.Info("discovered plugin", logArgs...)
+		serverLog.Info("discovered service", logArgs...)
 	}
 
 	handler := logHTTPRequests(logger, auth.WithUser(auth.RouteAccess(mux)))

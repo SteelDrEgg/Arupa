@@ -14,7 +14,7 @@ import (
 type userContextKey struct{}
 
 // WithUser authenticates each HTTP request once and stores the result in its
-// context for host and plugin handlers to reuse.
+// context for host and service handlers to reuse.
 func WithUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := AuthenticateRequest(r)
@@ -47,7 +47,7 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // RouteAccess applies the current top-level configured route group rules
-// before the request reaches host or plugin routing. The longest matching
+// before the request reaches host or service routing. The longest matching
 // pattern wins. Rules are read per request so configuration reloads take
 // effect without rebuilding the HTTP server.
 func RouteAccess(next http.Handler) http.Handler {

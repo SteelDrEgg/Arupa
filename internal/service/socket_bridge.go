@@ -1,4 +1,4 @@
-package plugin
+package service
 
 import (
 	"encoding/json"
@@ -12,24 +12,25 @@ import (
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
-// socketBridge wires plugin-declared Socket.IO namespaces and events into the
-// global Socket.IO server. Incoming events are forwarded to the owning plugin;
-// emits requested by plugins (either in-reply for WASM or via the Host.Emit
-// callback for gRPC) are sent out through this bridge.
+// socketBridge wires service-declared Socket.IO namespaces and events into the
+// global Socket.IO server. Incoming events are forwarded to the owning service;
+// emits requested by services (either in-reply for WASM or via the Host.Emit
+// broker Host API for gRPC) are sent out through this bridge.
 type socketBridge struct {
 	server *netx.Socket
 	log    *slog.Logger
 
 	mu         sync.RWMutex
-	owners     map[string]socketOwner // namespace -> current plugin binding
+	owners     map[string]socketOwner // namespace -> current service binding
 	registered map[string]struct{}    // namespace -> dynamic handlers installed
 }
 
 type socketOwner struct {
-	pluginName string
-	plugin     *loadedPlugin
-	decl       SocketNamespaceDecl
-	events     map[string]struct{}
+	serviceName string
+	service     *loadedService
+	routeID     string
+	decl        SocketIORoute
+	events      map[string]struct{}
 }
 
 func newSocketBridge(server *netx.Socket, log *slog.Logger) *socketBridge {
@@ -45,56 +46,57 @@ func newSocketBridge(server *netx.Socket, log *slog.Logger) *socketBridge {
 	}
 }
 
-// register attaches a plugin's namespace and its event handlers.
+// register attaches a service's namespace and its event handlers.
 //
 // Socket.IO namespaces are kept as stable shells. The namespace middleware and
 // connection handler are installed once; each connection and event dispatch
 // resolves the current owner and event declaration from b.owners. Stop clears
 // the owner and disconnects sockets from that namespace; Restart replaces it.
-func (b *socketBridge) register(pluginName string, decl SocketNamespaceDecl, lp *loadedPlugin) error {
-	if decl.Name == "" {
+func (b *socketBridge) register(serviceName, routeID string, decl SocketIORoute, lp *loadedService) error {
+	if decl.Namespace == "" {
 		return fmt.Errorf("socket namespace name is required")
 	}
 	if lp == nil || lp.conn == nil {
-		return fmt.Errorf("socket namespace %q requires a plugin connection", decl.Name)
+		return fmt.Errorf("socket namespace %q requires a service connection", decl.Namespace)
 	}
 
-	b.server.AddNamespace(decl.Name)
-	ns := b.server.GetNamespace(decl.Name)
+	b.server.AddNamespace(decl.Namespace)
+	ns := b.server.GetNamespace(decl.Namespace)
 	if ns.Raw() == nil {
-		return fmt.Errorf("failed to create socket namespace %q", decl.Name)
+		return fmt.Errorf("failed to create socket namespace %q", decl.Namespace)
 	}
 
 	b.mu.Lock()
-	if owner, exists := b.owners[decl.Name]; exists && owner.pluginName != "" && owner.pluginName != pluginName {
+	if owner, exists := b.owners[decl.Namespace]; exists && owner.serviceName != "" {
 		b.mu.Unlock()
-		return fmt.Errorf("socket namespace %q already owned by plugin %q", decl.Name, owner.pluginName)
+		return fmt.Errorf("socket namespace %q already owned by service %q", decl.Namespace, owner.serviceName)
 	}
-	_, alreadyRegistered := b.registered[decl.Name]
+	_, alreadyRegistered := b.registered[decl.Namespace]
 	if !alreadyRegistered {
-		b.installNamespaceHandlersLocked(decl.Name, ns)
-		b.registered[decl.Name] = struct{}{}
+		b.installNamespaceHandlersLocked(decl.Namespace, ns)
+		b.registered[decl.Namespace] = struct{}{}
 	}
-	b.owners[decl.Name] = newSocketOwner(pluginName, decl, lp)
+	b.owners[decl.Namespace] = newSocketOwner(serviceName, routeID, decl, lp)
 	b.mu.Unlock()
 	return nil
 }
 
-func newSocketOwner(pluginName string, decl SocketNamespaceDecl, lp *loadedPlugin) socketOwner {
+func newSocketOwner(serviceName, routeID string, decl SocketIORoute, lp *loadedService) socketOwner {
 	events := make(map[string]struct{}, len(decl.Events))
 	for _, event := range decl.Events {
 		events[event] = struct{}{}
 	}
 
 	return socketOwner{
-		pluginName: pluginName,
-		plugin:     lp,
-		decl:       cloneSocketNamespaceDecl(decl),
-		events:     events,
+		serviceName: serviceName,
+		service:     lp,
+		routeID:     routeID,
+		decl:        cloneSocketIORoute(decl),
+		events:      events,
 	}
 }
 
-func cloneSocketNamespaceDecl(decl SocketNamespaceDecl) SocketNamespaceDecl {
+func cloneSocketIORoute(decl SocketIORoute) SocketIORoute {
 	decl.Events = append([]string(nil), decl.Events...)
 	if len(decl.Access.Groups) > 0 {
 		decl.Access.Groups = append([]string(nil), decl.Access.Groups...)
@@ -108,6 +110,18 @@ func cloneSocketNamespaceDecl(decl SocketNamespaceDecl) SocketNamespaceDecl {
 		decl.EventAccess = eventAccess
 	}
 	return decl
+}
+
+func (b *socketBridge) unregister(serviceName, namespace string) {
+	b.mu.Lock()
+	owner := b.owners[namespace]
+	if owner.serviceName == serviceName {
+		b.owners[namespace] = socketOwner{}
+	}
+	b.mu.Unlock()
+	if owner.serviceName == serviceName {
+		b.server.GetNamespace(namespace).DisconnectSockets(false)
+	}
 }
 
 func (b *socketBridge) installNamespaceHandlersLocked(nsName string, ns netx.Namespace) {
@@ -134,29 +148,29 @@ func (b *socketBridge) authorizeNamespace(nsName string, client *socket.Socket) 
 	owner, ok := b.ownerForNamespace(nsName)
 	if !ok {
 		b.log.Warn("socket namespace unavailable", "namespace", nsName)
-		return socket.NewExtendedError("Unavailable", "namespace is not owned by a running plugin")
+		return socket.NewExtendedError("Unavailable", "namespace is not owned by a running service")
 	}
 	user := auth.UserFromSocket(client)
-	if err := socketAccessError(owner.plugin.accessPolicy().Check(user)); err != nil {
-		b.log.Warn("socket namespace access denied", "namespace", nsName, "plugin", owner.pluginName)
+	if err := socketAccessError(owner.service.accessPolicy().Check(user)); err != nil {
+		b.log.Warn("socket namespace access denied", "namespace", nsName, "service", owner.serviceName)
 		return err
 	}
 	if err := socketAccessError(owner.decl.Access.Check(user)); err != nil {
-		b.log.Warn("socket namespace access denied", "namespace", nsName, "plugin", owner.pluginName)
+		b.log.Warn("socket namespace access denied", "namespace", nsName, "service", owner.serviceName)
 		return err
 	}
 	return nil
 }
 
-// unregisterPlugin releases all namespace ownership held by pluginName. The
+// unregisterService releases all namespace ownership held by serviceName. The
 // underlying Socket.IO namespace and dynamic handlers remain installed, but
-// future connections are rejected until a plugin registers the namespace again.
+// future connections are rejected until a service registers the namespace again.
 // Existing sockets are disconnected from the released namespace.
-func (b *socketBridge) unregisterPlugin(pluginName string) {
+func (b *socketBridge) unregisterService(serviceName string) {
 	b.mu.Lock()
 	var released []string
 	for ns, owner := range b.owners {
-		if owner.pluginName == pluginName {
+		if owner.serviceName == serviceName {
 			b.owners[ns] = socketOwner{}
 			released = append(released, ns)
 		}
@@ -181,11 +195,11 @@ func (b *socketBridge) handleAny(nsName string, client *socket.Socket, args []an
 		return
 	}
 	if !owner.handlesEvent(event) {
-		b.log.Debug("ignore undeclared socket event", "namespace", nsName, "event", event, "plugin", owner.pluginName)
+		b.log.Debug("ignore undeclared socket event", "namespace", nsName, "event", event, "service", owner.serviceName)
 		return
 	}
 	user := auth.UserFromSocket(client)
-	if decision := owner.plugin.accessPolicy().Check(user); decision != auth.AccessAllowed {
+	if decision := owner.service.accessPolicy().Check(user); decision != auth.AccessAllowed {
 		b.emitAccessError(client, event, decision)
 		return
 	}
@@ -248,9 +262,10 @@ func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socke
 		return
 	}
 
-	ctx, cancel := owner.plugin.eventContext()
+	ctx, cancel := owner.service.eventContext()
 	defer cancel()
-	emits, err := owner.plugin.conn.HandleSocketEvent(ctx, &SocketEvent{
+	emits, err := owner.service.conn.HandleSocketEvent(ctx, &SocketEvent{
+		RouteID:   owner.routeID,
 		Namespace: ns,
 		Event:     event,
 		SocketID:  string(client.Id()),
@@ -258,13 +273,13 @@ func (b *socketBridge) handle(owner socketOwner, ns, event string, client *socke
 		Payload:   payload,
 	})
 	if err != nil {
-		b.log.Error("plugin socket handler failed", "namespace", ns, "event", event, "plugin", owner.pluginName, "err", err)
+		b.log.Error("service socket handler failed", "namespace", ns, "event", event, "service", owner.serviceName, "err", err)
 		return
 	}
-	b.log.Debug("socket event handled", "namespace", ns, "event", event, "plugin", owner.pluginName, "duration_ms", time.Since(start).Milliseconds())
+	b.log.Debug("socket event handled", "namespace", ns, "event", event, "service", owner.serviceName, "duration_ms", time.Since(start).Milliseconds())
 	for _, e := range emits {
 		if err := b.Emit(e); err != nil {
-			b.log.Error("apply plugin emit", "namespace", e.Namespace, "event", e.Event, "err", err)
+			b.log.Error("apply service emit", "namespace", e.Namespace, "event", e.Event, "err", err)
 		}
 	}
 }
@@ -284,7 +299,7 @@ func (b *socketBridge) ownerForNamespace(ns string) (socketOwner, bool) {
 	b.mu.RLock()
 	owner := b.owners[ns]
 	b.mu.RUnlock()
-	return owner, owner.pluginName != "" && owner.plugin != nil && owner.plugin.conn != nil
+	return owner, owner.serviceName != "" && owner.service != nil && owner.service.conn != nil
 }
 
 // Emit implements the Emitter interface used by HostAPI.

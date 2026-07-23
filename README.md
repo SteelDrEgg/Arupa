@@ -1,7 +1,7 @@
 <div align="center">
 
 <br>
-<img width="40%" src="doc/Arupa-full-white.svg" alt="Arupa plugin page" />
+<img width="40%" src="doc/Arupa-full-white.svg" alt="Arupa service page" />
 
 **An app hosting platform for server**
 
@@ -15,4 +15,10 @@
 
 ---
 
-Start from [here](https://docs.arupa.dev/)
+Start from [here](https://docs.arupa.dev/).
+
+The kernel loads `.plg` service packages with one of three runtimes: `static`,
+`wasm`, or `grpc`. Services dynamically register `static`, `http`,
+`socket.io`, and `proxy` transports, then bind routes to those transports.
+See [the service architecture](docs/service-architecture.md) for the v2
+contract and routing rules.

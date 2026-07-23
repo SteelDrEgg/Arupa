@@ -6,9 +6,9 @@ import (
 	"arupa/internal/conf"
 )
 
-// User is the host-verified identity attached to an inbound plugin request.
+// User is the host-verified identity attached to an inbound service request.
 // An unauthenticated request has Authenticated=false and no user payload is
-// sent across the plugin protocol.
+// sent across the service protocol.
 type User struct {
 	Username      string
 	Groups        []string
@@ -16,13 +16,13 @@ type User struct {
 }
 
 // AccessPolicy describes authentication and optional group requirements for a
-// resource declared by a plugin.
+// resource declared by a service.
 //
 // An empty policy is public. RequireAuth permits any authenticated user. A
 // non-empty Groups list requires an authenticated user in at least one group.
 type AccessPolicy struct {
-	RequireAuth bool
-	Groups      []string
+	RequireAuth bool     `json:"require_auth,omitempty" yaml:"require_auth,omitempty"`
+	Groups      []string `json:"groups,omitempty" yaml:"groups,omitempty"`
 }
 
 type AccessDecision uint8

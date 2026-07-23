@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const pluginsDefaultKey = "default"
+const servicesDefaultKey = "default"
 
 const (
 	// envParamPrefix marks a Params value as an environment variable reference.
@@ -18,29 +18,29 @@ const (
 	envParamOptional = "?"
 )
 
-// PluginAutoStart reports whether a plugin should be auto-started.
+// ServiceAutoStart reports whether a service should be auto-started.
 //
-// Per-plugin policy under [Plugins.<name>] overrides [Plugins.default].
-func (c Config) PluginAutoStart(name string) bool {
-	return c.PluginSystem.EffectivePlugin(name).AutoStart()
+// Per-service policy under [Services.<name>] overrides [Services.default].
+func (c Config) ServiceAutoStart(name string) bool {
+	return c.ServiceSystem.EffectiveService(name).AutoStart()
 }
 
-// PluginParams returns the config params a plugin should receive.
+// ServiceParams returns the config params a service should receive.
 //
-// Params from [Plugins.default.params] are used as a base, then overridden by
-// per-plugin [Plugins.<name>.params] entries.
-func (c Config) PluginParams(name string) map[string]string {
-	return c.PluginSystem.EffectivePlugin(name).Params
+// Params from [Services.default.params] are used as a base, then overridden by
+// per-service [Services.<name>.params] entries.
+func (c Config) ServiceParams(name string) map[string]string {
+	return c.ServiceSystem.EffectiveService(name).Params
 }
 
-// ResolveParams returns the values a plugin should receive at registration.
+// ResolveParams returns the values a service should receive at registration.
 //
 // A normal value is passed through unchanged. Values in the form
 // "env://NAME" are read from the environment and are required. Values in the
 // form "env://NAME?" are optional; an unset variable is passed as an empty
 // string. LookupEnv is injected so this logic remains deterministic and easy
 // to test.
-func (p Plugin) ResolveParams(lookup func(string) (string, bool)) (map[string]string, error) {
+func (p Service) ResolveParams(lookup func(string) (string, bool)) (map[string]string, error) {
 	if lookup == nil {
 		return nil, fmt.Errorf("environment lookup is required")
 	}
@@ -69,19 +69,19 @@ func (p Plugin) ResolveParams(lookup func(string) (string, bool)) (map[string]st
 	return resolved, nil
 }
 
-// PluginRunAsUser returns the OS user a gRPC plugin should run as.
+// ServiceRunAsUser returns the OS user a gRPC service should run as.
 //
-// Per-plugin policy under [Plugins.<name>] overrides [Plugins.default].
+// Per-service policy under [Services.<name>] overrides [Services.default].
 // An empty result means the current arupa process user.
-func (c Config) PluginRunAsUser(name string) string {
-	return c.PluginSystem.EffectivePlugin(name).RunAsUser
+func (c Config) ServiceRunAsUser(name string) string {
+	return c.ServiceSystem.EffectiveService(name).RunAsUser
 }
 
 // SHA256Checksum returns the normalized expected package digest. An empty
 // Checksum disables verification. The method is shared by configuration
-// validation and the plugin loader so every launch path applies the same
+// validation and the service loader so every launch path applies the same
 // syntax rules.
-func (p Plugin) SHA256Checksum() (digest string, enabled bool, err error) {
+func (p Service) SHA256Checksum() (digest string, enabled bool, err error) {
 	raw := strings.TrimSpace(p.Checksum)
 	if raw == "" {
 		return "", false, nil
@@ -98,26 +98,26 @@ func (p Plugin) SHA256Checksum() (digest string, enabled bool, err error) {
 	return strings.ToLower(digest), true, nil
 }
 
-// PatchPluginParams updates one plugin's explicit Params override and persists
-// the full config. Defaults remain inherited at EffectivePlugin read time.
-func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
+// PatchServiceParams updates one service's explicit Params override and persists
+// the full config. Defaults remain inherited at EffectiveService read time.
+func PatchServiceParams(name string, patch ServiceParamsPatch) (Config, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Config{}, fmt.Errorf("plugin name is required")
+		return Config{}, fmt.Errorf("service name is required")
 	}
-	if name == pluginsDefaultKey {
-		return Config{}, fmt.Errorf("default plugin params cannot be patched by a plugin")
+	if name == servicesDefaultKey {
+		return Config{}, fmt.Errorf("default service params cannot be patched by a service")
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
 	next := cloneConfig(Conf)
-	if next.PluginSystem.Plugins == nil {
-		next.PluginSystem.Plugins = map[string]Plugin{}
+	if next.ServiceSystem.Services == nil {
+		next.ServiceSystem.Services = map[string]Service{}
 	}
 
-	policy, exists := next.PluginSystem.Plugins[name]
+	policy, exists := next.ServiceSystem.Services[name]
 	if !exists && len(patch.Set) == 0 {
 		return next, nil
 	}
@@ -135,7 +135,7 @@ func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
 	if len(policy.Params) == 0 {
 		policy.Params = nil
 	}
-	next.PluginSystem.Plugins[name] = policy
+	next.ServiceSystem.Services[name] = policy
 
 	if err := writeLocked(next); err != nil {
 		return Config{}, err
@@ -143,19 +143,19 @@ func PatchPluginParams(name string, patch PluginParamsPatch) (Config, error) {
 	return next, nil
 }
 
-// EffectivePlugin returns the merged runtime config for name.
+// EffectiveService returns the merged runtime config for name.
 //
-// [Plugins.default] is used as a base. Per-plugin Restart and RunAsUser values
+// [Services.default] is used as a base. Per-service Restart and RunAsUser values
 // override the base when non-empty, Allow overrides the default group list
-// when configured, and Params are merged with per-plugin keys taking
+// when configured, and Params are merged with per-service keys taking
 // precedence.
-func (s PluginSystem) EffectivePlugin(name string) Plugin {
-	base := Plugin{}
-	if def, ok := s.Plugins[pluginsDefaultKey]; ok {
-		base = clonePlugin(def)
+func (s ServiceSystem) EffectiveService(name string) Service {
+	base := Service{}
+	if def, ok := s.Services[servicesDefaultKey]; ok {
+		base = cloneService(def)
 	}
-	if policy, ok := s.Plugins[name]; ok && name != pluginsDefaultKey {
-		base = mergePlugin(base, policy)
+	if policy, ok := s.Services[name]; ok && name != servicesDefaultKey {
+		base = mergeService(base, policy)
 	}
 	base.Restart = strings.TrimSpace(base.Restart)
 	base.RunAsUser = strings.TrimSpace(base.RunAsUser)
@@ -166,21 +166,21 @@ func (s PluginSystem) EffectivePlugin(name string) Plugin {
 	return base
 }
 
-// AutoStart reports whether this plugin config enables automatic startup.
-func (p Plugin) AutoStart() bool {
+// AutoStart reports whether this service config enables automatic startup.
+func (p Service) AutoStart() bool {
 	return parseRestart(p.Restart)
 }
 
-// Clone returns a deep copy of a plugin config.
-func (p Plugin) Clone() Plugin {
-	return clonePlugin(p)
+// Clone returns a deep copy of a service config.
+func (p Service) Clone() Service {
+	return cloneService(p)
 }
 
-// ConfiguredPluginNames returns explicit plugin config names, excluding default.
-func (s PluginSystem) ConfiguredPluginNames() []string {
-	out := make([]string, 0, len(s.Plugins))
-	for name := range s.Plugins {
-		if name == pluginsDefaultKey {
+// ConfiguredServiceNames returns explicit service config names, excluding default.
+func (s ServiceSystem) ConfiguredServiceNames() []string {
+	out := make([]string, 0, len(s.Services))
+	for name := range s.Services {
+		if name == servicesDefaultKey {
 			continue
 		}
 		out = append(out, name)
@@ -189,20 +189,20 @@ func (s PluginSystem) ConfiguredPluginNames() []string {
 	return out
 }
 
-// Clone returns a deep copy of the plugin-system configuration.
-func (s PluginSystem) Clone() PluginSystem {
-	out := PluginSystem{
-		PluginDir:     s.PluginDir,
-		PluginTempDir: s.PluginTempDir,
-		Plugins:       make(map[string]Plugin, len(s.Plugins)),
+// Clone returns a deep copy of the service-system configuration.
+func (s ServiceSystem) Clone() ServiceSystem {
+	out := ServiceSystem{
+		ServiceDir:     s.ServiceDir,
+		ServiceTempDir: s.ServiceTempDir,
+		Services:       make(map[string]Service, len(s.Services)),
 	}
-	for name, policy := range s.Plugins {
-		out.Plugins[name] = clonePlugin(policy)
+	for name, policy := range s.Services {
+		out.Services[name] = cloneService(policy)
 	}
 	return out
 }
 
-func mergePlugin(base, override Plugin) Plugin {
+func mergeService(base, override Service) Service {
 	if strings.TrimSpace(override.Restart) != "" {
 		base.Restart = override.Restart
 	}
@@ -226,8 +226,8 @@ func mergePlugin(base, override Plugin) Plugin {
 	return base
 }
 
-func clonePlugin(p Plugin) Plugin {
-	out := Plugin{
+func cloneService(p Service) Service {
+	out := Service{
 		Restart:   p.Restart,
 		RunAsUser: p.RunAsUser,
 		Checksum:  p.Checksum,
