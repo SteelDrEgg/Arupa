@@ -26,11 +26,16 @@ type Manifest struct {
 	Routes     []spec.Route     `yaml:"routes"`
 }
 
-func (l *Loader) loadStatic(scanned catalog.DiscoveredService, cfg conf.Service) (*LoadResult, error) {
+func (l *Loader) loadStatic(
+	scanned catalog.DiscoveredService,
+	cfg conf.Service,
+	tempDir string,
+	access func() auth.AccessPolicy,
+) (*LoadResult, error) {
 	if err := verifyPackageChecksum(scanned.PackagePath, cfg); err != nil {
 		return nil, fmt.Errorf("verify service %q package checksum: %w", scanned.Name, err)
 	}
-	root, err := extractStaticPackage(l.tempDir, scanned.PackagePath)
+	root, err := extractStaticPackage(tempDir, scanned.PackagePath)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +56,7 @@ func (l *Loader) loadStatic(scanned catalog.DiscoveredService, cfg conf.Service)
 			InstanceID: scanned.Name, Name: scanned.Name, Version: scanned.Version,
 			Type: scanned.Type, Path: scanned.PackagePath,
 		},
-		Access:      auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
+		Access:      access,
 		CleanupDirs: []string{root},
 	})
 	if err := l.bindings.Attach(scanned.Name, loaded, contentRoot, nil); err != nil {

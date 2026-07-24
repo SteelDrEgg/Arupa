@@ -14,7 +14,7 @@ import (
 type Options struct {
 	Connection     spec.Conn
 	Record         *spec.ServiceRecord
-	Access         auth.AccessPolicy
+	Access         func() auth.AccessPolicy
 	CloseBackend   func() error
 	StopHostBroker func()
 	CleanupDirs    []string
@@ -28,8 +28,7 @@ type Instance struct {
 	recordMu sync.Mutex
 	record   *spec.ServiceRecord
 
-	accessMu sync.RWMutex
-	access   auth.AccessPolicy
+	access func() auth.AccessPolicy
 
 	lifecycle context.Context
 	cancel    context.CancelFunc
@@ -60,24 +59,14 @@ func (i *Instance) Connection() spec.Conn {
 }
 
 func (i *Instance) AccessPolicy() auth.AccessPolicy {
-	if i == nil {
+	if i == nil || i.access == nil {
 		return auth.AccessPolicy{}
 	}
-	i.accessMu.RLock()
-	defer i.accessMu.RUnlock()
+	access := i.access()
 	return auth.AccessPolicy{
-		RequireAuth: i.access.RequireAuth,
-		Groups:      append([]string(nil), i.access.Groups...),
+		RequireAuth: access.RequireAuth,
+		Groups:      append([]string(nil), access.Groups...),
 	}
-}
-
-func (i *Instance) UpdateAccessGroups(groups []string) {
-	if i == nil {
-		return
-	}
-	i.accessMu.Lock()
-	i.access.Groups = append([]string(nil), groups...)
-	i.accessMu.Unlock()
 }
 
 func (i *Instance) CallContext(parent context.Context) (context.Context, context.CancelFunc) {

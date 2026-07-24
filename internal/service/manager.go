@@ -22,8 +22,6 @@ import (
 
 // Options configures a Manager.
 type Options struct {
-	// Config contains service directories and per-service runtime config.
-	Config conf.ServiceSystem
 	// Mux receives the service HTTP dispatcher fallback. Host routes registered
 	// on more specific patterns keep precedence over service routes.
 	Mux *http.ServeMux
@@ -51,13 +49,6 @@ type Manager struct {
 
 // NewManager builds a service manager and registers its HTTP dispatcher.
 func NewManager(opts Options) (*Manager, error) {
-	cfg := opts.Config.Clone()
-	if strings.TrimSpace(cfg.ServiceDir) == "" {
-		return nil, fmt.Errorf("ServiceDir is required")
-	}
-	if strings.TrimSpace(cfg.ServiceTempDir) == "" {
-		return nil, fmt.Errorf("ServiceTempDir is required")
-	}
 	if opts.Mux == nil {
 		return nil, fmt.Errorf("Mux is required")
 	}
@@ -69,10 +60,6 @@ func NewManager(opts Options) (*Manager, error) {
 		logger = slog.Default()
 	}
 	managerLog := logger.With("component", "kernel", "from", "service_manager")
-
-	if err := os.MkdirAll(cfg.ServiceTempDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
 
 	kv := NewKV()
 	registry := NewRegistry(kv)
@@ -90,16 +77,21 @@ func NewManager(opts Options) (*Manager, error) {
 	})
 	api := NewHostAPI(kv, socketBridge, logger)
 	api.SetResourceRegistrar(bindings)
-	loader, err := runner.New(runner.Options{
-		TempDir: cfg.ServiceTempDir, API: api, Bindings: bindings,
-	})
+	loader, err := runner.New(runner.Options{API: api, Bindings: bindings})
 	if err != nil {
 		return nil, err
 	}
 
 	runtime := supervisor.New(supervisor.Options{
-		Config: cfg, Catalog: catalog.New(kv, managerLog),
-		Loader: loader, Bindings: bindings, Registry: registry, Logger: managerLog,
+		ServiceDir: func() string {
+			dir, _ := conf.GetServicePaths()
+			return dir
+		},
+		ServiceConfig:          currentServiceOperationConfig,
+		ServiceAccess:          currentServiceAccess,
+		ConfiguredServiceNames: configuredServiceNames,
+		Catalog:                catalog.New(kv, managerLog),
+		Loader:                 loader, Bindings: bindings, Registry: registry, Logger: managerLog,
 	})
 
 	m := &Manager{
@@ -125,17 +117,6 @@ func (m *Manager) KV() *KV { return m.kv }
 // Registry exposes the service registry.
 func (m *Manager) Registry() *Registry { return m.registry }
 
-// Config returns the service-system configuration currently held by the manager.
-func (m *Manager) Config() conf.ServiceSystem {
-	return m.runtime.Config()
-}
-
-// UpdateConfig replaces the service-system configuration used by future scans
-// and starts. The extraction temp dir is fixed when the manager is created.
-func (m *Manager) UpdateConfig(cfg conf.ServiceSystem) {
-	m.runtime.UpdateConfig(cfg)
-}
-
 // DispatchServiceMessage delivers a host-authenticated service message to the
 // target service named in msg.Target.
 func (m *Manager) DispatchServiceMessage(ctx context.Context, msg ServiceMessage) (string, error) {
@@ -145,15 +126,25 @@ func (m *Manager) DispatchServiceMessage(ctx context.Context, msg ServiceMessage
 // PatchServiceParams persists a caller-scoped Params patch and refreshes runtime
 // config snapshots used by future starts.
 func (m *Manager) PatchServiceParams(name string, patch ParamsPatch) error {
-	next, err := conf.PatchServiceParams(name, conf.ServiceParamsPatch{
-		Set:    patch.Set,
-		Delete: patch.Delete,
-	})
-	if err != nil {
-		return err
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("service name is required")
 	}
-	m.UpdateConfig(next.ServiceSystem)
-	return nil
+	if name == defaultServiceName {
+		return fmt.Errorf("default service params cannot be patched by a service")
+	}
+	operations := make([]conf.Operation, 0, len(patch.Set)+len(patch.Delete))
+	for _, key := range patch.Delete {
+		operations = append(operations, conf.Remove(conf.JoinPath(
+			string(conf.ConfigFieldServices), name, string(conf.ServiceFieldParams), key,
+		)))
+	}
+	for key, value := range patch.Set {
+		operations = append(operations, conf.Set(conf.JoinPath(
+			string(conf.ConfigFieldServices), name, string(conf.ServiceFieldParams), key,
+		), value))
+	}
+	return conf.Update(operations...)
 }
 
 // GetServiceParams returns the current effective, environment-resolved Params
@@ -164,7 +155,7 @@ func (m *Manager) GetServiceParams(name string) (map[string]string, error) {
 	if name == "" {
 		return nil, fmt.Errorf("service name is required")
 	}
-	params, err := m.Config().EffectiveService(name).ResolveParams(os.LookupEnv)
+	params, err := currentServiceConfig(name).ResolveParams(os.LookupEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +197,9 @@ func (m *Manager) StartByName(name string) (*ServiceRecord, error) {
 
 // Start starts a previously scanned service by name.
 func (m *Manager) Start(name string) error {
+	if err := m.runtime.Scan(); err != nil {
+		return err
+	}
 	return m.runtime.Start(name)
 }
 
@@ -218,7 +212,10 @@ func (m *Manager) Stop(name string) error {
 // Restart stops a service when it is running, then starts the latest scanned
 // package for the same name.
 func (m *Manager) Restart(name string) error {
-	return m.runtime.Restart(name)
+	if err := m.Stop(name); err != nil {
+		return err
+	}
+	return m.Start(name)
 }
 
 // StartConfigured starts all discovered services whose effective config enables

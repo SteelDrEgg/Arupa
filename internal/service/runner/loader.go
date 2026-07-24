@@ -41,7 +41,6 @@ var handshake = goservice.HandshakeConfig{
 const defaultRegisterTimeout = 15 * time.Second
 
 type Options struct {
-	TempDir  string
 	API      *host.API
 	Bindings *binding.Controller
 	// RegisterTimeout bounds Register calls while loading services. A zero value
@@ -50,7 +49,6 @@ type Options struct {
 }
 
 type Loader struct {
-	tempDir         string
 	api             *host.API
 	bindings        *binding.Controller
 	registerTimeout time.Duration
@@ -68,7 +66,6 @@ func New(opts Options) (*Loader, error) {
 		registerTimeout = defaultRegisterTimeout
 	}
 	l := &Loader{
-		tempDir:         opts.TempDir,
 		api:             opts.API,
 		bindings:        opts.Bindings,
 		registerTimeout: registerTimeout,
@@ -82,9 +79,21 @@ func New(opts Options) (*Loader, error) {
 	return l, nil
 }
 
-func (l *Loader) Load(scanned catalog.DiscoveredService, cfg conf.Service) (*LoadResult, error) {
+func (l *Loader) Load(
+	scanned catalog.DiscoveredService,
+	cfg conf.Service,
+	tempDir string,
+	access func() auth.AccessPolicy,
+) (*LoadResult, error) {
+	tempDir = strings.TrimSpace(tempDir)
+	if tempDir == "" {
+		return nil, fmt.Errorf("service temp directory is required")
+	}
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
 	if scanned.Type == "static" {
-		return l.loadStatic(scanned, cfg)
+		return l.loadStatic(scanned, cfg, tempDir, access)
 	}
 	if err := verifyPackageChecksum(scanned.PackagePath, cfg); err != nil {
 		return nil, fmt.Errorf("verify service %q package checksum: %w", scanned.Name, err)
@@ -103,7 +112,7 @@ func (l *Loader) Load(scanned catalog.DiscoveredService, cfg conf.Service) (*Loa
 	}
 	var inherited inheritedProxy
 	var prepareErr error
-	loader, err := l.newInner(runAsUser, func(client *goservice.ClientConfig) {
+	loader, err := l.newInner(tempDir, runAsUser, func(client *goservice.ClientConfig) {
 		if scanned.Type != "grpc" {
 			return
 		}
@@ -148,7 +157,7 @@ func (l *Loader) Load(scanned catalog.DiscoveredService, cfg conf.Service) (*Loa
 	lp := instance.New(instance.Options{
 		Connection: conn,
 		Record:     record,
-		Access:     auth.AccessPolicy{Groups: append([]string(nil), cfg.Allow...)},
+		Access:     access,
 		CloseBackend: func() error {
 			return loader.Unload(handle)
 		},
@@ -283,9 +292,9 @@ func (l *Loader) registerContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), l.registerTimeout)
 }
 
-func (l *Loader) newInner(runAsUser string, override func(*goservice.ClientConfig)) (*goservice.Manager, error) {
+func (l *Loader) newInner(tempDir, runAsUser string, override func(*goservice.ClientConfig)) (*goservice.Manager, error) {
 	return goservice.NewManager(goservice.Config{
-		TempDir: l.tempDir,
+		TempDir: tempDir,
 		GRPC: &goservice.GRPCConfig{
 			HandshakeConfig:      handshake,
 			RunAsUser:            strings.TrimSpace(runAsUser),

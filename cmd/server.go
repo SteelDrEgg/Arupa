@@ -18,7 +18,7 @@ import (
 	"arupa/internal/web"
 )
 
-func runServer(cfg conf.Config, logger *slog.Logger) error {
+func runServer(logger *slog.Logger) error {
 	serverLog := logger.With("component", "kernel", "from", "server")
 	mux := http.NewServeMux()
 
@@ -29,14 +29,13 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	web.StartLogin(mux)
 
 	sm, err := service.NewManager(service.Options{
-		Config: cfg.ServiceSystem,
 		Mux:    mux,
 		Socket: socketServer,
 		Logger: logger,
 		ReservedHTTP: []string{
 			"/socket.io/",
 			"/api/login", "/api/logout", "/api/check-auth",
-			"/api/services", "/api/services/scan", "/api/services/start",
+			"/api/services", "/api/services/start",
 			"/api/services/stop", "/api/services/restart", "/api/services/config",
 			"/api/kernel/version", "/api/kernel/reload",
 		},
@@ -48,11 +47,7 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	web.StartService(mux, sm)
 
 	reloadConfig := func() error {
-		if err := conf.Update(); err != nil {
-			return err
-		}
-		sm.UpdateConfig(conf.GetServiceSystem())
-		return nil
+		return conf.Reload()
 	}
 	web.StartKernel(mux, version, reloadConfig)
 
@@ -74,9 +69,11 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 		serverLog.Info("discovered service", logArgs...)
 	}
 
+	listen := conf.GetListen()
+	tlsEnabled := conf.GetTLS()
 	handler := logHTTPRequests(logger, auth.WithUser(auth.RouteAccess(mux)))
-	srv := &http.Server{Addr: cfg.Listen, Handler: handler}
-	if cfg.TLS {
+	srv := &http.Server{Addr: listen, Handler: handler}
+	if tlsEnabled {
 		tlsConfig, err := netx.NewSelfSignedTLSConfig()
 		if err != nil {
 			return fmt.Errorf("configure self-signed TLS: %w", err)
@@ -88,11 +85,11 @@ func runServer(cfg conf.Config, logger *slog.Logger) error {
 	go func() {
 		protocol := "http"
 		serve := srv.ListenAndServe
-		if cfg.TLS {
+		if tlsEnabled {
 			protocol = "https"
 			serve = func() error { return srv.ListenAndServeTLS("", "") }
 		}
-		serverLog.Info("arupa listening", "addr", cfg.Listen, "protocol", protocol)
+		serverLog.Info("arupa listening", "addr", listen, "protocol", protocol)
 		if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

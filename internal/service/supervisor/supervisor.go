@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"arupa/internal/auth"
 	"arupa/internal/conf"
 	"arupa/internal/service/binding"
 	"arupa/internal/service/catalog"
@@ -24,12 +25,15 @@ type Registry interface {
 }
 
 type Options struct {
-	Config   conf.ServiceSystem
-	Catalog  *catalog.Catalog
-	Loader   *runner.Loader
-	Bindings *binding.Controller
-	Registry Registry
-	Logger   *slog.Logger
+	ServiceDir             func() string
+	ServiceConfig          func(string) (conf.Service, string)
+	ServiceAccess          func(string) auth.AccessPolicy
+	ConfiguredServiceNames func() []string
+	Catalog                *catalog.Catalog
+	Loader                 *runner.Loader
+	Bindings               *binding.Controller
+	Registry               Registry
+	Logger                 *slog.Logger
 }
 
 type Supervisor struct {
@@ -39,14 +43,17 @@ type Supervisor struct {
 	registry Registry
 	log      *slog.Logger
 
+	serviceDir             func() string
+	serviceConfig          func(string) (conf.Service, string)
+	serviceAccess          func(string) auth.AccessPolicy
+	configuredServiceNames func() []string
+
 	mu       sync.RWMutex
-	config   conf.ServiceSystem
 	services map[string]*serviceEntry
 }
 
 type serviceEntry struct {
 	info       catalog.DiscoveredService
-	config     conf.Service
 	discovered bool
 	loaded     *instance.Instance
 	status     ServiceStatus
@@ -76,14 +83,33 @@ func New(opts Options) *Supervisor {
 	if log == nil {
 		log = slog.Default()
 	}
+	serviceDir := opts.ServiceDir
+	if serviceDir == nil {
+		serviceDir = func() string { return "" }
+	}
+	serviceConfig := opts.ServiceConfig
+	if serviceConfig == nil {
+		serviceConfig = func(string) (conf.Service, string) { return conf.Service{}, "" }
+	}
+	serviceAccess := opts.ServiceAccess
+	if serviceAccess == nil {
+		serviceAccess = func(string) auth.AccessPolicy { return auth.AccessPolicy{} }
+	}
+	configuredServiceNames := opts.ConfiguredServiceNames
+	if configuredServiceNames == nil {
+		configuredServiceNames = func() []string { return nil }
+	}
 	return &Supervisor{
-		catalog:  opts.Catalog,
-		loader:   opts.Loader,
-		bindings: opts.Bindings,
-		registry: opts.Registry,
-		log:      log,
-		config:   opts.Config.Clone(),
-		services: make(map[string]*serviceEntry),
+		catalog:                opts.Catalog,
+		loader:                 opts.Loader,
+		bindings:               opts.Bindings,
+		registry:               opts.Registry,
+		log:                    log,
+		serviceDir:             serviceDir,
+		serviceConfig:          serviceConfig,
+		serviceAccess:          serviceAccess,
+		configuredServiceNames: configuredServiceNames,
+		services:               make(map[string]*serviceEntry),
 	}
 }
 
@@ -112,26 +138,6 @@ func statusIsRunning(status ServiceStatus) bool {
 	return status == ServiceStatusRunning || status == ServiceStatusDegraded
 }
 
-func (r *Supervisor) Config() conf.ServiceSystem {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.config.Clone()
-}
-
-func (r *Supervisor) UpdateConfig(cfg conf.ServiceSystem) {
-	cfg = cfg.Clone()
-
-	r.mu.Lock()
-	r.config = cfg
-	for name, entry := range r.services {
-		entry.config = cfg.EffectiveService(name)
-		if entry.loaded != nil {
-			entry.loaded.UpdateAccessGroups(entry.config.Allow)
-		}
-	}
-	r.mu.Unlock()
-}
-
 func (r *Supervisor) DispatchServiceMessage(ctx context.Context, msg spec.ServiceMessage) (string, error) {
 	r.mu.RLock()
 	entry, ok := r.services[msg.Target]
@@ -156,8 +162,8 @@ func (r *Supervisor) LoadConfigured() error {
 }
 
 func (r *Supervisor) Scan() error {
-	cfg := r.Config()
-	discovered, err := r.catalog.Discover(cfg.ServiceDir)
+	serviceDir := strings.TrimSpace(r.serviceDir())
+	discovered, err := r.catalog.Discover(serviceDir)
 	if err != nil {
 		return err
 	}
@@ -167,16 +173,15 @@ func (r *Supervisor) Scan() error {
 	for _, info := range discovered {
 		next[info.Name] = &serviceEntry{
 			info:       info,
-			config:     cfg.EffectiveService(info.Name),
 			discovered: true,
 			status:     ServiceStatusDiscovered,
 		}
 		scanned[info.Name] = struct{}{}
 	}
 
-	for _, name := range cfg.ConfiguredServiceNames() {
+	for _, name := range r.configuredServiceNames() {
 		if _, ok := scanned[name]; !ok {
-			r.log.Warn("configured service was not found in scan results", "name", name, "dir", cfg.ServiceDir)
+			r.log.Warn("configured service was not found in scan results", "name", name, "dir", serviceDir)
 		}
 	}
 
@@ -191,16 +196,13 @@ func (r *Supervisor) Scan() error {
 			nextEntry.status = entry.currentStatus()
 		} else if entry.loaded != nil {
 			entry.discovered = false
-			entry.config = cfg.EffectiveService(name)
 			entry.status = entry.currentStatus()
 			next[name] = entry
 		} else if entry.currentStatus() == ServiceStatusStarting || entry.currentStatus() == ServiceStatusStopping {
 			entry.discovered = false
-			entry.config = cfg.EffectiveService(name)
 			next[name] = entry
 		}
 	}
-	r.config = cfg.Clone()
 	r.services = next
 	r.mu.Unlock()
 
@@ -226,9 +228,10 @@ func (r *Supervisor) Entries() []ServiceEntry {
 		if !entry.discovered {
 			continue
 		}
+		cfg, _ := r.serviceConfig(entry.info.Name)
 		out = append(out, ServiceEntry{
 			DiscoveredService: entry.info,
-			Config:            entry.config.Clone(),
+			Config:            cfg,
 			Status:            entry.currentStatus(),
 		})
 	}
@@ -268,15 +271,15 @@ func (r *Supervisor) StartByName(name string) (*instance.Instance, error) {
 	}
 	entry.status = ServiceStatusStarting
 	info := entry.info
-	cfg := entry.config.Clone()
+	cfg, tempDir := r.serviceConfig(name)
 	r.mu.Unlock()
 
-	lp, degraded, err := r.loadScanned(info, cfg)
+	lp, degraded, err := r.loadScanned(info, cfg, tempDir)
 	if err != nil {
 		r.finishStartFailure(name)
 		return nil, err
 	}
-	if err := r.finishStartSuccess(name, info, cfg, lp, degraded); err != nil {
+	if err := r.finishStartSuccess(name, info, lp, degraded); err != nil {
 		_ = r.cleanupLoaded(name, lp)
 		r.finishStartFailure(name)
 		return nil, err
@@ -326,63 +329,6 @@ func (r *Supervisor) Stop(name string) error {
 	return nil
 }
 
-func (r *Supervisor) Restart(name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("service name is required")
-	}
-
-	r.mu.Lock()
-	entry, ok := r.services[name]
-	if !ok {
-		r.mu.Unlock()
-		return fmt.Errorf("service %q not found in scan results", name)
-	}
-	if !entry.discovered {
-		r.mu.Unlock()
-		return fmt.Errorf("service %q is not available in scan results", name)
-	}
-	status := entry.currentStatus()
-	if status == ServiceStatusStarting || status == ServiceStatusStopping {
-		r.mu.Unlock()
-		return fmt.Errorf("service %q is %s", name, status)
-	}
-	info := entry.info
-	cfg := entry.config.Clone()
-	lp := entry.loaded
-	if statusIsRunning(status) && lp != nil {
-		entry.loaded = nil
-		entry.status = ServiceStatusStopping
-	} else {
-		entry.status = ServiceStatusStarting
-	}
-	r.mu.Unlock()
-
-	if lp != nil {
-		if err := r.cleanupLoaded(name, lp); err != nil {
-			r.finishStop(name, ServiceStatusFailed)
-			return err
-		}
-		r.mu.Lock()
-		if entry := r.services[name]; entry != nil {
-			entry.status = ServiceStatusStarting
-		}
-		r.mu.Unlock()
-	}
-
-	next, degraded, err := r.loadScanned(info, cfg)
-	if err != nil {
-		r.finishStartFailure(name)
-		return err
-	}
-	if err := r.finishStartSuccess(name, info, cfg, next, degraded); err != nil {
-		_ = r.cleanupLoaded(name, next)
-		r.finishStartFailure(name)
-		return err
-	}
-	return nil
-}
-
 func (r *Supervisor) StartConfigured() error {
 	for _, entry := range r.Entries() {
 		if !entry.Config.AutoStart() {
@@ -405,13 +351,12 @@ func (r *Supervisor) Load(path string) (*instance.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := r.Config().EffectiveService(scanned.Name)
+	cfg, tempDir := r.serviceConfig(scanned.Name)
 	r.mu.Lock()
 	entry, ok := r.services[scanned.Name]
 	if !ok {
 		entry = &serviceEntry{
 			info:       scanned,
-			config:     cfg.Clone(),
 			discovered: true,
 			status:     ServiceStatusDiscovered,
 		}
@@ -423,17 +368,16 @@ func (r *Supervisor) Load(path string) (*instance.Instance, error) {
 		return nil, fmt.Errorf("service %q is %s", scanned.Name, status)
 	}
 	entry.info = scanned
-	entry.config = cfg.Clone()
 	entry.discovered = true
 	entry.status = ServiceStatusStarting
 	r.mu.Unlock()
 
-	lp, degraded, err := r.loadScanned(scanned, cfg)
+	lp, degraded, err := r.loadScanned(scanned, cfg, tempDir)
 	if err != nil {
 		r.finishStartFailure(scanned.Name)
 		return nil, err
 	}
-	if err := r.finishStartSuccess(scanned.Name, scanned, cfg, lp, degraded); err != nil {
+	if err := r.finishStartSuccess(scanned.Name, scanned, lp, degraded); err != nil {
 		_ = r.cleanupLoaded(scanned.Name, lp)
 		r.finishStartFailure(scanned.Name)
 		return nil, err
@@ -441,8 +385,14 @@ func (r *Supervisor) Load(path string) (*instance.Instance, error) {
 	return lp, nil
 }
 
-func (r *Supervisor) loadScanned(scanned catalog.DiscoveredService, cfg conf.Service) (*instance.Instance, bool, error) {
-	result, err := r.loader.Load(scanned, cfg)
+func (r *Supervisor) loadScanned(
+	scanned catalog.DiscoveredService,
+	cfg conf.Service,
+	tempDir string,
+) (*instance.Instance, bool, error) {
+	result, err := r.loader.Load(scanned, cfg, tempDir, func() auth.AccessPolicy {
+		return r.serviceAccess(scanned.Name)
+	})
 	if err != nil {
 		var unfaithful *runner.UnfaithfulServiceError
 		if errors.As(err, &unfaithful) {
@@ -477,7 +427,7 @@ func (r *Supervisor) logLoadResult(result *runner.LoadResult, degraded bool) {
 	}
 }
 
-func (r *Supervisor) finishStartSuccess(name string, scanned catalog.DiscoveredService, cfg conf.Service, lp *instance.Instance, degraded bool) error {
+func (r *Supervisor) finishStartSuccess(name string, scanned catalog.DiscoveredService, lp *instance.Instance, degraded bool) error {
 	r.mu.Lock()
 	entry, ok := r.services[name]
 	if !ok {
@@ -490,7 +440,6 @@ func (r *Supervisor) finishStartSuccess(name string, scanned catalog.DiscoveredS
 		return fmt.Errorf("service %q start completed while status is %s", name, status)
 	}
 	entry.info = scanned
-	entry.config = cfg.Clone()
 	entry.discovered = true
 	entry.loaded = lp
 	if degraded {

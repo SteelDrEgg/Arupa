@@ -44,9 +44,6 @@ func StartService(mux *http.ServeMux, sm *service.Manager) {
 	mux.HandleFunc("/api/services", auth.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
 		handleServiceList(w, r, sm)
 	}))
-	mux.HandleFunc("/api/services/scan", auth.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
-		handleServiceScan(w, r, sm)
-	}))
 	mux.HandleFunc("/api/services/start", auth.RequireAuth(func(w http.ResponseWriter, r *http.Request) {
 		handleServiceStart(w, r, sm)
 	}))
@@ -67,6 +64,10 @@ func handleServiceList(w http.ResponseWriter, r *http.Request, sm *service.Manag
 		return
 	}
 
+	if err := sm.Scan(); err != nil {
+		netx.WriteInternalServerError(w, "Failed to read service directory", err)
+		return
+	}
 	entries := sm.Entries()
 	services := make([]serviceView, 0, len(entries))
 	for _, entry := range entries {
@@ -88,31 +89,12 @@ func handleServiceList(w http.ResponseWriter, r *http.Request, sm *service.Manag
 		return running[i].InstanceID < running[j].InstanceID
 	})
 
-	cfg := conf.GetServiceSystem()
+	serviceDir, serviceTempDir := conf.GetServicePaths()
 	netx.WriteSuccess(w, "Service state fetched", map[string]any{
-		"service_dir":      cfg.ServiceDir,
-		"service_temp_dir": cfg.ServiceTempDir,
+		"service_dir":      serviceDir,
+		"service_temp_dir": serviceTempDir,
 		"discovered":       services,
 		"running":          running,
-	})
-}
-
-func handleServiceScan(w http.ResponseWriter, r *http.Request, sm *service.Manager) {
-	if r.Method != http.MethodPost {
-		netx.WriteMethodNotAllowed(w)
-		return
-	}
-
-	sm.UpdateConfig(conf.GetServiceSystem())
-	if err := sm.Scan(); err != nil {
-		netx.WriteInternalServerError(w, "Failed to scan service directory", err)
-		return
-	}
-
-	serviceCfg := sm.Config()
-	netx.WriteSuccess(w, "Service directory scanned", map[string]any{
-		"service_dir": serviceCfg.ServiceDir,
-		"count":       len(sm.Entries()),
 	})
 }
 
@@ -197,10 +179,10 @@ func readServiceActionName(w http.ResponseWriter, r *http.Request) (string, bool
 func handleServiceConfig(w http.ResponseWriter, r *http.Request, sm *service.Manager) {
 	switch r.Method {
 	case http.MethodGet:
-		cfg := conf.GetServiceSystem()
+		serviceDir, serviceTempDir := conf.GetServicePaths()
 		netx.WriteSuccess(w, "Service config fetched", map[string]any{
-			"service_dir":      cfg.ServiceDir,
-			"service_temp_dir": cfg.ServiceTempDir,
+			"service_dir":      serviceDir,
+			"service_temp_dir": serviceTempDir,
 		})
 	case http.MethodPut:
 		var req serviceConfigRequest
@@ -226,25 +208,27 @@ func handleServiceConfig(w http.ResponseWriter, r *http.Request, sm *service.Man
 			return
 		}
 
-		oldCfg := conf.GetServiceSystem()
-		newCfg, err := conf.SetServicePaths(req.ServiceDir, req.ServiceTempDir)
-		if err != nil {
+		_, oldServiceTempDir := conf.GetServicePaths()
+		if err := conf.Update(
+			conf.Set(conf.JoinPath(string(conf.ConfigFieldServiceDir)), req.ServiceDir),
+			conf.Set(conf.JoinPath(string(conf.ConfigFieldServiceTempDir)), req.ServiceTempDir),
+		); err != nil {
 			netx.WriteInternalServerError(w, "Failed to persist service config", err)
 			return
 		}
 
-		sm.UpdateConfig(newCfg.ServiceSystem)
 		if err := sm.Scan(); err != nil {
 			netx.WriteInternalServerError(w, "Service config saved, but scan failed", err)
 			return
 		}
 
-		tempDirChanged := oldCfg.ServiceTempDir != newCfg.ServiceSystem.ServiceTempDir
+		newServiceDir, newServiceTempDir := conf.GetServicePaths()
+		tempDirChanged := oldServiceTempDir != newServiceTempDir
 		netx.WriteSuccess(w, "Service config updated", map[string]any{
-			"service_dir":                     newCfg.ServiceSystem.ServiceDir,
-			"service_temp_dir":                newCfg.ServiceSystem.ServiceTempDir,
+			"service_dir":                     newServiceDir,
+			"service_temp_dir":                newServiceTempDir,
 			"temp_dir_requires_restart":       tempDirChanged,
-			"temp_dir_restart_reason":         "service manager temp dir is initialized at startup",
+			"temp_dir_restart_reason":         "running services keep their current extraction directory",
 			"discovered_service_count":        len(sm.Entries()),
 			"scan_path_effective_immediately": true,
 		})

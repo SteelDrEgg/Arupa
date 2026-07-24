@@ -81,6 +81,9 @@ func ValidateSession(token string) (string, bool) {
 		return "", false
 	}
 
+	// TODO(config): define whether removing or changing a configured user should
+	// invalidate that user's existing sessions. The minimal behavior keeps a
+	// token valid until logout or expiry.
 	return session.Username, true
 }
 
