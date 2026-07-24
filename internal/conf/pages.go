@@ -12,10 +12,10 @@ func GetPagePath(statusCode int) (string, bool) {
 		return "", false
 	}
 
-	mu.RLock()
-	defer mu.RUnlock()
+	configState.mu.RLock()
+	defer configState.mu.RUnlock()
 
-	path := strings.TrimSpace(Conf.Pages[strconv.Itoa(statusCode)])
+	path := strings.TrimSpace(configState.current.Pages[strconv.Itoa(statusCode)])
 	if !isLocalPagePath(path) {
 		return "", false
 	}

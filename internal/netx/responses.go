@@ -115,5 +115,3 @@ func WriteForbidden(w http.ResponseWriter, message string) error {
 func WriteInternalServerError(w http.ResponseWriter, message string, err error) error {
 	return WriteError(w, http.StatusInternalServerError, message, err)
 }
-
-//TODO: Stop request if not LAN

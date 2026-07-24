@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/release.yml"
+      - ".github/workflows/ci.yml"
       - "Dockerfile"
       - "Makefile"
       - "go.mod"
@@ -41,6 +41,15 @@ jobs:
 
       - name: Download modules
         run: go mod download
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Install proto tools
+        run: make tools
+
+      - name: Generate service SDK
+        run: make proto
 
 #      - name: Test
 #        run: go test ./...

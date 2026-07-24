@@ -72,7 +72,7 @@ type Namespace struct {
 }
 
 // Raw returns the underlying Socket.IO namespace for advanced use such as the
-// plugin Socket.IO bridge. It uses a value receiver so it can be called on the
+// service Socket.IO bridge. It uses a value receiver so it can be called on the
 // namespaces returned by Socket.GetNamespace.
 func (self Namespace) Raw() socket.Namespace {
 	return self.namespace

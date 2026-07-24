@@ -1,6 +1,6 @@
 Listen = ":8080"
-PluginDir = "plugins"
-PluginTempDir = "tmp"
+ServiceDir = "services"
+ServiceTempDir = "tmp"
 
 [Pages]
   "401" = "/pages/login.html"
@@ -8,21 +8,21 @@ PluginTempDir = "tmp"
 [Users]
   admin = "$2a$10$MnmhGyn4pELBONBmkY.XDOcEXDUJjMYPtVnFrdTQLeJYPZCLEJFeS" # password: admin
 
-[Plugins]
-  [Plugins.default]
+[Services]
+  [Services.default]
     Restart = "no"
     RunAsUser = ""
 
-  # Coreplugins
-  [Plugins.hello]
+  # Core services
+  [Services.hello]
     Restart = "always"
-    [Plugins.hello.Params]
+    [Services.hello.Params]
       greeting = "env://HIHI"
-  [Plugins.web-assets]
+  [Services.web-assets]
     Restart = "always"
-  [Plugins.login]
+  [Services.login]
     Restart = "always"
-  [Plugins.navigator]
+  [Services.navigator]
     Restart = "always"
-  [Plugins.plugin-manager]
+  [Services.service-manager]
     Restart = "always"

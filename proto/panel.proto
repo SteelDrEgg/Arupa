@@ -1,99 +1,167 @@
 syntax = "proto3";
 
-package arupa.plugin.v1;
+package arupa.service.v2;
 
-option go_package = "github.com/SteelDrEgg/arupa-sdk/golang/gen/grpc;pluginv1";
+option go_package = "github.com/SteelDrEgg/arupa-sdk/golang/gen/grpc;servicev2";
 
-// ===== common request context and access =====
 message User {
   string username = 1;
   repeated string groups = 2;
 }
 
 message AccessPolicy {
-  // Require any authenticated user when groups is empty.
   bool require_auth = 1;
-  // A non-empty list requires membership in at least one group.
   repeated string groups = 2;
 }
 
-// ===== HTTP =====
-message HTTPRoute {
-  string method = 1;  // GET/POST/...; empty = any method
-  string pattern = 2; // e.g. "/hello", "/api/foo/"
-  AccessPolicy access = 3;
+message Header {
+  string name = 1;
+  repeated string values = 2;
 }
 
 message HTTPRequest {
-  string route_pattern = 1; // the pattern this request matched
-  string method = 2;
-  string path = 3;
-  string query = 4;
-  map<string, string> headers = 5;
-  bytes body = 6;
-  string remote_addr = 7;
-  User user = 8;
+  string route_id = 1;
+  string route_pattern = 2;
+  string method = 3;
+  string path = 4;
+  string query = 5;
+  repeated Header headers = 6;
+  bytes body = 7;
+  string remote_addr = 8;
+  User user = 9;
 }
 
 message HTTPResponse {
   int32 status = 1;
-  map<string, string> headers = 2;
+  repeated Header headers = 2;
   bytes body = 3;
 }
 
-// ===== static files =====
-message StaticMount {
-  string prefix = 1;    // URL path prefix, e.g. "/assets/"
-  string directory = 2; // host directory path to serve
-  AccessPolicy access = 3;
-}
-
-// ===== socket.io =====
-message SocketNamespace {
-  string name = 1;            // e.g. "/hello"
-  repeated string events = 2; // events the plugin handles
-  AccessPolicy access = 3;
-  map<string, AccessPolicy> event_access = 4; // optional event-specific policies
-}
-
 message SocketEvent {
-  string namespace = 1;
-  string event = 2;
-  string socket_id = 3;
-  bytes payload = 4; // JSON-encoded event arguments
-  User user = 5;
+  string route_id = 1;
+  string namespace = 2;
+  string event = 3;
+  string socket_id = 4;
+  bytes payload = 5;
+  User user = 6;
 }
 
 message EmitInstruction {
   string namespace = 1;
-  string target = 2; // socket id, or empty for broadcast to namespace
+  string target = 2;
   string event = 3;
-  bytes payload = 4; // JSON-encoded emit arguments
+  bytes payload = 4;
 }
 
 message SocketEventReply {
-  // Emits returned in-reply (used by WASM where the plugin cannot push
-  // spontaneously). gRPC plugins may also use the Host.Emit callback.
   repeated EmitInstruction emits = 1;
 }
 
-// ===== registration =====
+message InheritedListener {
+  string id = 1;
+  uint32 fd = 2;
+  string network = 3;
+  string address = 4;
+}
+
 message RegisterRequest {
   string instance_id = 1;
-  string host_callback_addr = 2;  // gRPC plugins dial this to call Host.*; WASM ignores
-  string host_callback_token = 3; // auth token for host callbacks; WASM ignores
-  map<string, string> params = 4; // host-provided config params from [Plugins.<name>.params]
+  map<string, string> params = 2;
+  repeated InheritedListener listeners = 3;
+  // A github.com/hashicorp/go-plugin GRPCBroker stream served by the kernel.
+  // gRPC services dial this ID through their broker to call Host.*.
+  uint32 host_broker_id = 4;
 }
 
 message RegisterReply {
   string name = 1;
   string version = 2;
-  repeated HTTPRoute http_routes = 3;
-  repeated SocketNamespace socket_namespaces = 4;
-  repeated StaticMount static_mounts = 5;
 }
 
-// ===== KV =====
+enum TransportType {
+  TRANSPORT_TYPE_UNSPECIFIED = 0;
+  TRANSPORT_TYPE_STATIC = 1;
+  TRANSPORT_TYPE_HTTP = 2;
+  TRANSPORT_TYPE_SOCKET_IO = 3;
+  TRANSPORT_TYPE_PROXY = 4;
+}
+
+enum ProxyNetwork {
+  PROXY_NETWORK_UNSPECIFIED = 0;
+  PROXY_NETWORK_INHERITED = 1;
+  PROXY_NETWORK_UNIX = 2;
+  PROXY_NETWORK_TCP = 3;
+}
+
+message StaticTransport {
+  string source = 1;
+}
+
+message ProxyTransport {
+  ProxyNetwork network = 1;
+  string address = 2;
+  string scheme = 3;
+}
+
+message Transport {
+  string id = 1;
+  TransportType type = 2;
+  oneof config {
+    StaticTransport static = 3;
+    ProxyTransport proxy = 4;
+  }
+}
+
+message HTTPRoute {
+  string method = 1;
+  string pattern = 2;
+  AccessPolicy access = 3;
+}
+
+message SocketIORoute {
+  string namespace = 1;
+  repeated string events = 2;
+  AccessPolicy access = 3;
+  map<string, AccessPolicy> event_access = 4;
+}
+
+message Route {
+  string id = 1;
+  string transport_id = 2;
+  oneof route {
+    HTTPRoute http = 3;
+    SocketIORoute socket_io = 4;
+  }
+}
+
+message RegisterTransportRequest {
+  Transport transport = 1;
+}
+
+message UnregisterTransportRequest {
+  string id = 1;
+}
+
+message RegisterRoutesRequest {
+  repeated Route routes = 1;
+}
+
+message UnregisterRoutesRequest {
+  repeated string ids = 1;
+}
+
+message RegistrationFailure {
+  string id = 1;
+  string error = 2;
+}
+
+message RegistrationReply {
+  repeated string registered = 1;
+  repeated RegistrationFailure failures = 2;
+  bool degraded = 3;
+  string error = 4;
+}
+
 message KVGetRequest {
   string namespace = 1;
   string key = 2;
@@ -113,13 +181,11 @@ message KVDeleteRequest {
   string key = 2;
 }
 message KVDeleteReply { string error = 1; }
-message KVListRequest { string namespace = 1; } // empty namespace = list namespace names
+message KVListRequest { string namespace = 1; }
 message KVListReply { repeated string keys = 1; }
 
 message EmitReply { string error = 1; }
 
-// ===== persisted plugin params =====
-// The caller is identified by the authenticated host callback context.
 message ParamsGetRequest {}
 message ParamsGetReply {
   map<string, string> params = 1;
@@ -132,15 +198,14 @@ message ParamsPatchRequest {
 }
 message ParamsPatchReply { string error = 1; }
 
-// ===== plugin messages =====
-message PluginMessage {
-  string source = 1; // set by host to the registered plugin name; caller-supplied values are ignored
-  string target = 2; // registered plugin name to deliver to
+message ServiceMessage {
+  string source = 1;
+  string target = 2;
   string topic = 3;
   bytes payload = 4;
 }
 
-message PluginMessageReply {
+message ServiceMessageReply {
   string error = 1;
   string message = 2;
 }
@@ -151,19 +216,14 @@ message LogRequest {
 }
 message LogReply {}
 
-// host -> plugin (shared by both backends, all unary)
-// go:plugin type=plugin version=1
-service Plugin {
+// go:plugin type=plugin version=2
+service Service {
   rpc Register(RegisterRequest) returns (RegisterReply);
   rpc HandleHTTP(HTTPRequest) returns (HTTPResponse);
   rpc HandleSocketEvent(SocketEvent) returns (SocketEventReply);
-  rpc HandlePluginMessage(PluginMessage) returns (PluginMessageReply);
+  rpc HandleServiceMessage(ServiceMessage) returns (ServiceMessageReply);
 }
 
-// plugin -> host (shared service for both backends)
-// WASM: protoc-gen-go-plugin generates host functions imported by the module.
-// gRPC: protoc-gen-go-grpc generates a standard server the host runs on
-//       localhost; plugins dial host_callback_addr to call these.
 // go:plugin type=host
 service Host {
   rpc KVGet(KVGetRequest) returns (KVGetReply);
@@ -173,6 +233,10 @@ service Host {
   rpc GetParams(ParamsGetRequest) returns (ParamsGetReply);
   rpc PatchParams(ParamsPatchRequest) returns (ParamsPatchReply);
   rpc Emit(EmitInstruction) returns (EmitReply);
-  rpc SendPluginMessage(PluginMessage) returns (PluginMessageReply);
+  rpc SendServiceMessage(ServiceMessage) returns (ServiceMessageReply);
+  rpc RegisterTransport(RegisterTransportRequest) returns (RegistrationReply);
+  rpc UnregisterTransport(UnregisterTransportRequest) returns (RegistrationReply);
+  rpc RegisterRoutes(RegisterRoutesRequest) returns (RegistrationReply);
+  rpc UnregisterRoutes(UnregisterRoutesRequest) returns (RegistrationReply);
   rpc Log(LogRequest) returns (LogReply);
 }

@@ -14,14 +14,10 @@ func NewUser(name string, password string) error {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	newConf := conf.Read()
-
-	if newConf.Auth.Users == nil {
-		newConf.Auth.Users = make(map[string]string)
-	}
-	newConf.Auth.Users[name] = string(hash)
-
-	err = conf.Write(newConf)
+	err = conf.Update(conf.Set(
+		conf.JoinPath(string(conf.ConfigFieldUsers), name),
+		string(hash),
+	))
 	if err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}

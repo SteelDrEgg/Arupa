@@ -16,7 +16,7 @@ const (
 )
 
 // ValidatePathPattern validates the small path-pattern language shared by
-// access rules and plugin registrations. Patterns are exact unless they end
+// access rules and service registrations. Patterns are exact unless they end
 // in "/", in which case they match that subtree. The legacy "/*" notation is
 // deliberately rejected: it looks like a general wildcard but is not one.
 func ValidatePathPattern(pattern string) error {

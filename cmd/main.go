@@ -40,10 +40,10 @@ func main() {
 		return
 	}
 
-	cfg := loadServerConfig(opts.ConfigPath, bootstrapLogger)
-	logger := logx.New(cfg.Log, os.Stdout)
+	loadServerConfig(opts.ConfigPath, bootstrapLogger)
+	logger := logx.New(conf.GetLog(), os.Stdout)
 	slog.SetDefault(logger)
-	if err := runServer(cfg, logger); err != nil {
+	if err := runServer(logger); err != nil {
 		logger.With("component", "kernel", "from", "server").Error("server stopped with error", "err", err)
 		os.Exit(1)
 	}

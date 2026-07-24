@@ -11,7 +11,7 @@ import (
 
 // logHTTPRequests emits exactly one structured access record after every HTTP
 // request. It is the outermost application handler so it covers kernel,
-// plugin, static, and Socket.IO HTTP traffic alike.
+// service, static, proxy, and Socket.IO HTTP traffic alike.
 func logHTTPRequests(logger *slog.Logger, next http.Handler) http.Handler {
 	log := logger.With("component", "kernel", "from", "http")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
