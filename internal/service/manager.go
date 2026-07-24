@@ -78,7 +78,7 @@ func NewManager(opts Options) (*Manager, error) {
 	registry := NewRegistry(kv)
 	socketBridge := socketio.New(opts.Socket, logger)
 	transports := transport.NewRegistry()
-	routes := route.NewRegistry(transports, socketBridge)
+	routes := route.NewRegistry(transports, socketBridge, logger)
 	if err := routes.Reserve("kernel", opts.ReservedHTTP...); err != nil {
 		return nil, err
 	}

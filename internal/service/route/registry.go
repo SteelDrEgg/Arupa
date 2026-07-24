@@ -5,6 +5,7 @@ package route
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -56,15 +57,20 @@ type Registry struct {
 	reserved   map[string]string
 	transports TransportResolver
 	socket     SocketRegistry
+	log        *slog.Logger
 }
 
-func NewRegistry(transports TransportResolver, socket SocketRegistry) *Registry {
+func NewRegistry(transports TransportResolver, socket SocketRegistry, log *slog.Logger) *Registry {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &Registry{
 		byID:       make(map[routeKey]*binding),
 		http:       make(map[httpRouteKey]*binding),
 		reserved:   make(map[string]string),
 		transports: transports,
 		socket:     socket,
+		log:        log.With("component", "kernel", "from", "service_route"),
 	}
 }
 
@@ -95,27 +101,27 @@ func (r *Registry) Register(owner string, declaration spec.Route) error {
 	declaration.ID = strings.TrimSpace(declaration.ID)
 	declaration.TransportID = strings.TrimSpace(declaration.TransportID)
 	if owner == "" {
-		return fmt.Errorf("route owner is required")
+		return r.reject(owner, declaration, fmt.Errorf("route owner is required"))
 	}
 	if declaration.ID == "" {
-		return fmt.Errorf("route id is required")
+		return r.reject(owner, declaration, fmt.Errorf("route id is required"))
 	}
 	if declaration.TransportID == "" {
-		return fmt.Errorf("route %q transport is required", declaration.ID)
+		return r.reject(owner, declaration, fmt.Errorf("route %q transport is required", declaration.ID))
 	}
 	if (declaration.HTTP == nil) == (declaration.SocketIO == nil) {
-		return fmt.Errorf("route %q must contain exactly one route kind", declaration.ID)
+		return r.reject(owner, declaration, fmt.Errorf("route %q must contain exactly one route kind", declaration.ID))
 	}
 	resolved, ok := r.transports.Lookup(owner, declaration.TransportID)
 	if !ok {
-		return fmt.Errorf("transport %q is not registered by service %q", declaration.TransportID, owner)
+		return r.reject(owner, declaration, fmt.Errorf("transport %q is not registered by service %q", declaration.TransportID, owner))
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	k := routeKey{owner: owner, id: declaration.ID}
 	if _, exists := r.byID[k]; exists {
-		return fmt.Errorf("route id %q is already registered", declaration.ID)
+		return r.reject(owner, declaration, fmt.Errorf("route id %q is already registered", declaration.ID))
 	}
 
 	prepared := &binding{owner: owner, route: declaration, transport: resolved}
@@ -125,13 +131,13 @@ func (r *Registry) Register(owner string, declaration spec.Route) error {
 		}
 	} else {
 		if resolved.Spec().Type != spec.TransportSocketIO {
-			return fmt.Errorf("socket.io route %q requires a socket.io transport", declaration.ID)
+			return r.reject(owner, declaration, fmt.Errorf("socket.io route %q requires a socket.io transport", declaration.ID))
 		}
 		if r.socket == nil {
-			return fmt.Errorf("socket.io registry is unavailable")
+			return r.reject(owner, declaration, fmt.Errorf("socket.io registry is unavailable"))
 		}
 		if err := r.socket.Register(owner, declaration.ID, *declaration.SocketIO, resolved.Endpoint()); err != nil {
-			return err
+			return r.reject(owner, declaration, err)
 		}
 	}
 	r.byID[k] = prepared
@@ -141,27 +147,28 @@ func (r *Registry) Register(owner string, declaration spec.Route) error {
 func (r *Registry) registerHTTPLocked(prepared *binding) error {
 	declaration := *prepared.route.HTTP
 	if err := netx.ValidatePathPattern(declaration.Pattern); err != nil {
-		return fmt.Errorf("invalid http route pattern: %w", err)
+		return r.reject(prepared.owner, prepared.route, fmt.Errorf("invalid http route pattern: %w", err))
 	}
 	switch prepared.transport.Spec().Type {
 	case spec.TransportHTTP, spec.TransportStatic, spec.TransportProxy:
 	default:
-		return fmt.Errorf("http route %q cannot use %s transport", prepared.route.ID, prepared.transport.Spec().Type)
+		return r.reject(prepared.owner, prepared.route, fmt.Errorf("http route %q cannot use %s transport", prepared.route.ID, prepared.transport.Spec().Type))
 	}
 	declaration.Method = normalizeMethod(declaration.Method)
 	prepared.route.HTTP = &declaration
 	if owner, reserved := r.reserved[declaration.Pattern]; reserved {
-		return fmt.Errorf("path %q is reserved by %q", declaration.Pattern, owner)
+		return r.rejectConflict(prepared, nil, "", "reserved", owner,
+			fmt.Errorf("path %q is reserved by %q", declaration.Pattern, owner))
 	}
 	if prepared.transport.Spec().Type == spec.TransportStatic {
 		if declaration.Method != "" {
-			return fmt.Errorf("static route %q must use the wildcard method", prepared.route.ID)
+			return r.reject(prepared.owner, prepared.route, fmt.Errorf("static route %q must use the wildcard method", prepared.route.ID))
 		}
 		if prepared.transport.StaticDirectory() && !strings.HasSuffix(declaration.Pattern, "/") {
-			return fmt.Errorf("static directory route %q must end with '/'", prepared.route.ID)
+			return r.reject(prepared.owner, prepared.route, fmt.Errorf("static directory route %q must end with '/'", prepared.route.ID))
 		}
 		if !prepared.transport.StaticDirectory() && strings.HasSuffix(declaration.Pattern, "/") {
-			return fmt.Errorf("static file route %q must be exact", prepared.route.ID)
+			return r.reject(prepared.owner, prepared.route, fmt.Errorf("static file route %q must be exact", prepared.route.ID))
 		}
 	}
 
@@ -170,17 +177,67 @@ func (r *Registry) registerHTTPLocked(prepared *binding) error {
 			continue
 		}
 		if current.owner != prepared.owner {
-			return fmt.Errorf("path %q is already owned by service %q", declaration.Pattern, current.owner)
+			return r.rejectConflict(prepared, current, key.method, "owner", current.owner,
+				fmt.Errorf("path %q is already owned by service %q", declaration.Pattern, current.owner))
 		}
 		if current.transport.Spec().Type == spec.TransportStatic || prepared.transport.Spec().Type == spec.TransportStatic {
-			return fmt.Errorf("static and non-static routes conflict at path %q", declaration.Pattern)
+			return r.rejectConflict(prepared, current, key.method, "static", current.owner,
+				fmt.Errorf("static and non-static routes conflict at path %q", declaration.Pattern))
 		}
 		if methodsConflict(key.method, declaration.Method) {
-			return fmt.Errorf("route %s %q conflicts with route %q", formatMethod(declaration.Method), declaration.Pattern, current.route.ID)
+			return r.rejectConflict(prepared, current, key.method, "method", current.owner,
+				fmt.Errorf("route %s %q conflicts with route %q", formatMethod(declaration.Method), declaration.Pattern, current.route.ID))
 		}
 	}
 	r.http[httpRouteKey{pattern: declaration.Pattern, method: declaration.Method}] = prepared
 	return nil
+}
+
+func (r *Registry) reject(owner string, declaration spec.Route, err error) error {
+	args := []any{
+		"service", owner,
+		"route", declaration.ID,
+		"transport", declaration.TransportID,
+	}
+	if declaration.HTTP != nil {
+		args = append(args,
+			"path", declaration.HTTP.Pattern,
+			"method", formatMethod(normalizeMethod(declaration.HTTP.Method)),
+		)
+	} else if declaration.SocketIO != nil {
+		args = append(args, "namespace", declaration.SocketIO.Namespace)
+	}
+	args = append(args, "err", err)
+	r.log.Warn("service route registration failed", args...)
+	return err
+}
+
+func (r *Registry) rejectConflict(
+	incoming, current *binding,
+	currentMethod, kind, conflictOwner string,
+	err error,
+) error {
+	args := []any{
+		"service", incoming.owner,
+		"route", incoming.route.ID,
+		"transport", incoming.route.TransportID,
+		"transport_type", incoming.transport.Spec().Type,
+		"path", incoming.route.HTTP.Pattern,
+		"method", formatMethod(normalizeMethod(incoming.route.HTTP.Method)),
+		"conflict_kind", kind,
+		"conflict_service", conflictOwner,
+	}
+	if current != nil {
+		args = append(args,
+			"conflict_route", current.route.ID,
+			"conflict_method", formatMethod(currentMethod),
+			"conflict_transport", current.route.TransportID,
+			"conflict_transport_type", current.transport.Spec().Type,
+		)
+	}
+	args = append(args, "err", err)
+	r.log.Warn("service route registration conflict", args...)
+	return err
 }
 
 func (r *Registry) Unregister(owner, id string) error {
