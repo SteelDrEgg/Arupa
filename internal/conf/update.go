@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -77,17 +78,33 @@ func JoinPath(segments ...string) string {
 	return builder.String()
 }
 
-// Update applies operations in order as one serialized transaction. The
-// persistent file is replaced before the new in-memory configuration is
-// published.
+// Update applies operations to the latest persistent document in order as one
+// serialized transaction. The persistent file is replaced before the edited
+// configuration is published in memory.
 func Update(operations ...Operation) error {
 	configState.mu.Lock()
 	defer configState.mu.Unlock()
 
-	if strings.TrimSpace(configState.path) == "" {
-		return fmt.Errorf("config path is not set")
+	source, err := readConfigLocked()
+	if err != nil {
+		return err
 	}
-	editor := newEditor(configState.current)
+	diskConfig, err := decodeConfig(source)
+	if err != nil {
+		return err
+	}
+	document, err := parseTOMLDocument(source)
+	if err != nil {
+		return err
+	}
+
+	base := diskConfig
+	if reflect.DeepEqual(configState.current, diskConfig) {
+		// Preserve copy-on-write sharing in the normal case where the file has
+		// not been edited externally since the last successful transaction.
+		base = configState.current
+	}
+	editor := newEditor(base)
 	for index, operation := range operations {
 		if operation.Type == OperationSet && isNil(operation.Value) {
 			return fmt.Errorf("operation %d: set %s: nil value is not allowed", index, operation.Path)
@@ -99,16 +116,30 @@ func Update(operations ...Operation) error {
 		if err := editor.apply(operation, segments); err != nil {
 			return fmt.Errorf("operation %d: %s %s: %w", index, operationName(operation.Type), operation.Path, err)
 		}
+		if err := document.apply(operation, segments); err != nil {
+			return fmt.Errorf("operation %d: edit %s %s: %w", index, operationName(operation.Type), operation.Path, err)
+		}
 	}
 
-	if reflect.DeepEqual(configState.current, editor.next) {
-		return nil
-	}
 	if err := validateConfig(editor.next); err != nil {
 		return err
 	}
-	if err := persistLocked(editor.next); err != nil {
-		return err
+	persisted := document.bytes()
+	decoded, err := decodeConfig(persisted)
+	if err != nil {
+		return fmt.Errorf("validate edited config document: %w", err)
+	}
+	if !reflect.DeepEqual(editor.next, decoded) {
+		return fmt.Errorf("edited config document does not match requested update")
+	}
+
+	if !bytes.Equal(source, persisted) {
+		if err := persistLocked(persisted); err != nil {
+			return err
+		}
+	}
+	if reflect.DeepEqual(configState.current, editor.next) {
+		return nil
 	}
 	configState.current = editor.next
 	return nil

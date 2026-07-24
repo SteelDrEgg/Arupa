@@ -7,6 +7,7 @@ require (
 	github.com/SteelDrEgg/go-plugin v0.2.0
 	github.com/google/renameio v1.0.1
 	github.com/knqyf263/go-plugin v0.9.0
+	github.com/pelletier/go-toml/v2 v2.4.4-0.20260718201843-686c980c4758
 	github.com/shirou/gopsutil/v4 v4.25.8
 	github.com/tetratelabs/wazero v1.9.0
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.4

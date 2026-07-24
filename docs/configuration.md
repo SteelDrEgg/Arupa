@@ -13,11 +13,19 @@ Relative paths are resolved against the process working directory.
 fields, validates the candidate, and publishes it in memory only when the whole
 file is valid. An empty file is valid and selects the hard-coded defaults.
 
-`Update` accepts one or more ordered path operations. It builds a shallow
-copy-on-write candidate, validates it, replaces `config.toml` with mode `0600`,
-and then publishes the candidate in memory. A persistence failure leaves the
-effective in-memory configuration unchanged. All reloads and updates are
+`Update` accepts one or more ordered path operations. At the start of the
+transaction it reads and validates the latest `config.toml`, uses that
+configuration as its base, and applies the operations to both a shallow
+copy-on-write candidate and a layout-preserving TOML document. It verifies that
+both results are equivalent, replaces `config.toml` with mode `0600`, and then
+publishes the candidate in memory. A validation or persistence failure leaves
+the effective in-memory configuration unchanged. All reloads and updates are
 serialized by `conf`.
+
+Consequently, a successful `Update` also makes other valid edits already
+present on disk effective, even if `Reload` was not called first. An invalid
+disk document causes `Update` to fail without changing the current
+configuration.
 
 Update paths use case-sensitive JSON Pointer syntax. Fixed field names are
 declared by `conf` constants; dynamic map keys are escaped as JSON Pointer
@@ -29,10 +37,15 @@ segments. The current rules are:
 - Arrays are replaced as a whole.
 - Operations in one `Update` are applied in the supplied order.
 
-The logical update is copy-on-write, but the current persistence implementation
-rewrites the complete TOML document. Preserving comments and applying
-incremental file edits are future work. Cross-process coordination with a
-future standalone configuration CLI is also intentionally left as a TODO.
+Only the bytes expressing an updated path are rewritten. Comments, whitespace,
+line endings, and ordering outside the updated value are retained. Replacing or
+removing a complete table also removes comments attached to that table and its
+contents.
+
+Cross-process coordination with a future standalone configuration CLI is
+intentionally left as a TODO. Without cooperative locking, an external write
+that races between Update's read and atomic replacement remains last-writer
+wins.
 
 ## Defaults and services
 

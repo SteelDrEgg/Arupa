@@ -87,27 +87,12 @@ func Reload() error {
 }
 
 func reloadLocked() error {
-	if strings.TrimSpace(configState.path) == "" {
-		return fmt.Errorf("config path is not set")
-	}
-	if _, err := os.Stat(configState.path); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("config file does not exist: %s: %w", configState.path, err)
-	} else if err != nil {
-		return fmt.Errorf("stat config file %s: %w", configState.path, err)
-	}
-
-	var next Config
-	metadata, err := toml.DecodeFile(configState.path, &next)
+	source, err := readConfigLocked()
 	if err != nil {
-		return fmt.Errorf("decode config file: %w", err)
-	}
-	if err := validateTOMLKeys(metadata.Keys()); err != nil {
 		return err
 	}
-	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		return fmt.Errorf("unknown config field %q", undecoded[0].String())
-	}
-	if err := validateConfig(next); err != nil {
+	next, err := decodeConfig(source)
+	if err != nil {
 		return err
 	}
 
@@ -115,16 +100,41 @@ func reloadLocked() error {
 	return nil
 }
 
-func persistLocked(next Config) error {
-	var buffer bytes.Buffer
-	if err := toml.NewEncoder(&buffer).Encode(next); err != nil {
-		return fmt.Errorf("encode config file: %w", err)
+func readConfigLocked() ([]byte, error) {
+	if strings.TrimSpace(configState.path) == "" {
+		return nil, fmt.Errorf("config path is not set")
 	}
+	source, err := os.ReadFile(configState.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("config file does not exist: %s: %w", configState.path, err)
+	} else if err != nil {
+		return nil, fmt.Errorf("read config file %s: %w", configState.path, err)
+	}
+	return source, nil
+}
 
-	// TODO: preserve comments and formatting when applying path updates.
+func decodeConfig(source []byte) (Config, error) {
+	var next Config
+	metadata, err := toml.NewDecoder(bytes.NewReader(source)).Decode(&next)
+	if err != nil {
+		return Config{}, fmt.Errorf("decode config file: %w", err)
+	}
+	if err := validateTOMLKeys(metadata.Keys()); err != nil {
+		return Config{}, err
+	}
+	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		return Config{}, fmt.Errorf("unknown config field %q", undecoded[0].String())
+	}
+	if err := validateConfig(next); err != nil {
+		return Config{}, err
+	}
+	return next, nil
+}
+
+func persistLocked(source []byte) error {
 	// TODO: define cross-process coordination before a standalone CLI writes
 	// the same config file concurrently with the kernel.
-	if err := renameio.WriteFile(configState.path, buffer.Bytes(), 0o600); err != nil {
+	if err := renameio.WriteFile(configState.path, source, 0o600); err != nil {
 		return fmt.Errorf("replace config file: %w", err)
 	}
 	return nil
