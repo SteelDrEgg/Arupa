@@ -161,8 +161,10 @@ func (r *Registry) registerHTTPLocked(prepared *binding) error {
 			fmt.Errorf("path %q is reserved by %q", declaration.Pattern, owner))
 	}
 	if prepared.transport.Spec().Type == spec.TransportStatic {
-		if declaration.Method != "" {
-			return r.reject(prepared.owner, prepared.route, fmt.Errorf("static route %q must use the wildcard method", prepared.route.ID))
+		if declaration.Method != "" && declaration.Method != http.MethodGet {
+			return r.reject(prepared.owner, prepared.route,
+				fmt.Errorf("static route %q method must be empty (matches all HTTP methods) or GET; got %q",
+					prepared.route.ID, declaration.Method))
 		}
 		if prepared.transport.StaticDirectory() && !strings.HasSuffix(declaration.Pattern, "/") {
 			return r.reject(prepared.owner, prepared.route, fmt.Errorf("static directory route %q must end with '/'", prepared.route.ID))
